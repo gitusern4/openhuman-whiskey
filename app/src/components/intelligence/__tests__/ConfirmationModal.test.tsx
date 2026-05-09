@@ -53,7 +53,7 @@ describe('ConfirmationModal preferences', () => {
 
       expect(() => setDontShowAgainPreference('test-key', true)).not.toThrow();
       expect(warnMock).toHaveBeenCalledWith(
-        'Failed to save dontShowAgain preference to localStorage',
+        'Failed to save dontShowAgain preference to localStorage'
       );
 
       setItemMock.mockRestore();
