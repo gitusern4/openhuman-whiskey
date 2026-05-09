@@ -2,6 +2,13 @@ use super::{decrypt_handoff_blob, key_bytes_from_string};
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 
+// We need these for internal encryption in tests to ensure fixtures match the implementation
+use aes_gcm::aead::generic_array::typenum::U16;
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::aes::Aes256;
+use aes_gcm::AesGcm;
+type Aes256Gcm16 = AesGcm<Aes256, U16>;
+
 #[test]
 fn decodes_base64url_no_pad() {
     // A 32-byte key that, when base64url-encoded, contains both `-` and `_`.
@@ -48,13 +55,25 @@ fn rejects_wrong_length() {
 
 #[test]
 fn decrypts_valid_blob() {
-    // Generated via Node.js crypto:
-    // Key: QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=
-    // B64: JCQkJCQkJCQkJCQkJCQkJO0jqP9aSaielDGEQULvHaKPe7g8HW8rFwWa2g==
-    let key = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=";
-    let b64 = "JCQkJCQkJCQkJCQkJCQkJO0jqP9aSaielDGEQULvHaKPe7g8HW8rFwWa2g==";
-    let decrypted = decrypt_handoff_blob(b64, key).unwrap();
-    assert_eq!(decrypted, "hello world");
+    let key_bytes = [0x42u8; 32];
+    let iv_bytes = [0x24u8; 16];
+    let plain = "hello world";
+
+    let cipher = Aes256Gcm16::new_from_slice(&key_bytes).unwrap();
+    let nonce = aes_gcm::aead::generic_array::GenericArray::from_slice(&iv_bytes);
+    let encrypted = cipher.encrypt(nonce, plain.as_bytes()).unwrap();
+    let (ciphertext, tag) = encrypted.split_at(encrypted.len() - 16);
+
+    let mut combined = Vec::new();
+    combined.extend_from_slice(&iv_bytes);
+    combined.extend_from_slice(tag);
+    combined.extend_from_slice(ciphertext);
+
+    let b64 = STANDARD.encode(combined);
+    let key_str = STANDARD.encode(key_bytes);
+
+    let decrypted = decrypt_handoff_blob(&b64, &key_str).unwrap();
+    assert_eq!(decrypted, plain);
 }
 
 #[test]
@@ -74,42 +93,73 @@ fn decrypt_fails_on_invalid_base64() {
 
 #[test]
 fn decrypt_fails_on_wrong_key() {
-    let key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; // wrong key
-    let b64 = "JCQkJCQkJCQkJCQkJCQkJO0jqP9aSaielDGEQULvHaKPe7g8HW8rFwWa2g==";
-    let err = decrypt_handoff_blob(b64, key).unwrap_err();
+    let key_bytes = [0x42u8; 32];
+    let iv_bytes = [0x24u8; 16];
+    let plain = "hello world";
+
+    let cipher = Aes256Gcm16::new_from_slice(&key_bytes).unwrap();
+    let nonce = aes_gcm::aead::generic_array::GenericArray::from_slice(&iv_bytes);
+    let encrypted = cipher.encrypt(nonce, plain.as_bytes()).unwrap();
+    let (ciphertext, tag) = encrypted.split_at(encrypted.len() - 16);
+
+    let mut combined = Vec::new();
+    combined.extend_from_slice(&iv_bytes);
+    combined.extend_from_slice(tag);
+    combined.extend_from_slice(ciphertext);
+
+    let b64 = STANDARD.encode(combined);
+    let wrong_key = STANDARD.encode([0u8; 32]);
+
+    let err = decrypt_handoff_blob(&b64, &wrong_key).unwrap_err();
     assert!(err.to_string().contains("AES-GCM decrypt failed"));
 }
 
 #[test]
 fn decrypt_fails_on_tampered_ciphertext() {
-    let key = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=";
-    let mut combined = STANDARD.decode("JCQkJCQkJCQkJCQkJCQkJO0jqP9aSaielDGEQULvHaKPe7g8HW8rFwWa2g==").unwrap();
+    let key_bytes = [0x42u8; 32];
+    let iv_bytes = [0x24u8; 16];
+    let plain = "hello world";
+
+    let cipher = Aes256Gcm16::new_from_slice(&key_bytes).unwrap();
+    let nonce = aes_gcm::aead::generic_array::GenericArray::from_slice(&iv_bytes);
+    let encrypted = cipher.encrypt(nonce, plain.as_bytes()).unwrap();
+    let (ciphertext, tag) = encrypted.split_at(encrypted.len() - 16);
+
+    let mut combined = Vec::new();
+    combined.extend_from_slice(&iv_bytes);
+    combined.extend_from_slice(tag);
+    combined.extend_from_slice(ciphertext);
+
     // Tamper with the last byte of ciphertext
     let last = combined.len() - 1;
     combined[last] ^= 0xFF;
+
     let b64 = STANDARD.encode(combined);
-    let err = decrypt_handoff_blob(&b64, key).unwrap_err();
+    let key_str = STANDARD.encode(key_bytes);
+
+    let err = decrypt_handoff_blob(&b64, &key_str).unwrap_err();
     assert!(err.to_string().contains("AES-GCM decrypt failed"));
 }
 
 #[test]
 fn decrypt_fails_on_invalid_utf8() {
-    // Need a valid AES-GCM payload that decrypts to non-UTF8 bytes
-    // Using Node.js to generate:
-    // const crypto = require('crypto');
-    // const key = Buffer.alloc(32, 'B');
-    // const iv = Buffer.alloc(16, '$');
-    // const plaintext = Buffer.from([0xFF, 0xFE, 0xFD]);
-    // const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-    // let ct = cipher.update(plaintext);
-    // ct = Buffer.concat([ct, cipher.final()]);
-    // const tag = cipher.getAuthTag();
-    // const combined = Buffer.concat([iv, tag, ct]);
-    // console.log(combined.toString('base64'));
-    // -> JCQkJCQkJCQkJCQkJCQkJI9mD7G5mIu67Hq+f565+ZpQ784=
+    let key_bytes = [0x42u8; 32];
+    let iv_bytes = [0x24u8; 16];
+    let plain = [0xFFu8, 0xFE, 0xFD];
 
-    let key = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=";
-    let b64 = "JCQkJCQkJCQkJCQkJCQkJI9mD7G5mIu67Hq+f565+ZpQ784=";
-    let err = decrypt_handoff_blob(b64, key).unwrap_err();
+    let cipher = Aes256Gcm16::new_from_slice(&key_bytes).unwrap();
+    let nonce = aes_gcm::aead::generic_array::GenericArray::from_slice(&iv_bytes);
+    let encrypted = cipher.encrypt(nonce, plain.as_ref()).unwrap();
+    let (ciphertext, tag) = encrypted.split_at(encrypted.len() - 16);
+
+    let mut combined = Vec::new();
+    combined.extend_from_slice(&iv_bytes);
+    combined.extend_from_slice(tag);
+    combined.extend_from_slice(ciphertext);
+
+    let b64 = STANDARD.encode(combined);
+    let key_str = STANDARD.encode(key_bytes);
+
+    let err = decrypt_handoff_blob(&b64, &key_str).unwrap_err();
     assert!(err.to_string().contains("handoff plaintext is not UTF-8"));
 }
