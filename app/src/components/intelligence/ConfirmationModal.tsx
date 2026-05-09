@@ -2,6 +2,28 @@ import { useState } from 'react';
 
 import type { ConfirmationModal as ConfirmationModalType } from '../../types/intelligence';
 
+const DONT_SHOW_AGAIN_PREFIX = 'openhuman:dontShowAgain:';
+
+export function hasDontShowAgainPreference(key: string): boolean {
+  try {
+    return localStorage.getItem(`${DONT_SHOW_AGAIN_PREFIX}${key}`) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setDontShowAgainPreference(key: string, value: boolean): void {
+  try {
+    if (value) {
+      localStorage.setItem(`${DONT_SHOW_AGAIN_PREFIX}${key}`, 'true');
+    } else {
+      localStorage.removeItem(`${DONT_SHOW_AGAIN_PREFIX}${key}`);
+    }
+  } catch {
+    console.warn('Failed to save dontShowAgain preference to localStorage');
+  }
+}
+
 interface ConfirmationModalProps {
   modal: ConfirmationModalType;
   onClose: () => void;
@@ -15,9 +37,9 @@ export function ConfirmationModal({ modal, onClose }: ConfirmationModalProps) {
   const handleConfirm = () => {
     modal.onConfirm();
     onClose();
-    // TODO: Handle dontShowAgain preference storage
     if (dontShowAgain) {
-      console.log('User chose to not show similar confirmations again');
+      const key = modal.dontShowAgainKey || modal.title;
+      setDontShowAgainPreference(key, true);
     }
   };
 

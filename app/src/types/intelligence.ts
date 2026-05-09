@@ -99,6 +99,7 @@ export interface ConfirmationModal {
   onCancel: () => void;
   destructive?: boolean;
   showDontShowAgain?: boolean;
+  dontShowAgainKey?: string;
 }
 
 // Chat message type
