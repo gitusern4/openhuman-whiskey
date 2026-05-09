@@ -28,6 +28,9 @@ vi.mock('../../../lib/composio/composioApi', () => ({
 
 // Stub `openUrl` so deep-link clicks land in a mock instead of routing
 // through `tauri-plugin-opener` (which isn't loaded in the test env).
+vi.mock('../../../utils/workspaceLinks', () => ({
+  openWorkspacePath: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
 
 const { memoryTreeGraphExport, memoryTreeFlushNow, memoryTreeWipeAll, memoryTreeResetTree } =
@@ -45,6 +48,9 @@ const { listConnections, syncConnection } =
   };
 
 const { openUrl } = (await import('../../../utils/openUrl')) as unknown as { openUrl: Mock };
+const { openWorkspacePath } = (await import('../../../utils/workspaceLinks')) as unknown as {
+  openWorkspacePath: Mock;
+};
 
 function makeSummary(partial: Partial<GraphNode>): GraphNode {
   return {
@@ -92,6 +98,7 @@ describe('MemoryWorkspace (graph view)', () => {
     listConnections.mockResolvedValue({ connections: [] });
     syncConnection.mockResolvedValue({ ok: true });
     openUrl.mockResolvedValue(undefined);
+    openWorkspacePath.mockResolvedValue(undefined);
   });
 
   it('renders the SVG graph once the export RPC resolves', async () => {
@@ -128,16 +135,14 @@ describe('MemoryWorkspace (graph view)', () => {
     });
   });
 
-  it('clicking a summary node opens that file in Obsidian via the deep link', async () => {
+  it('clicking a summary node opens that file in workspace', async () => {
     renderWithProviders(<MemoryWorkspace />);
     const node = await screen.findByTestId('memory-graph-node-child-1');
     fireEvent.click(node);
     const expectedRel = 'wiki/summaries/source-gmail-alice-x-com/L1/summary-L1-abc.md';
     const expectedAbs = '/tmp/workspace/memory_tree/content/' + expectedRel;
     await waitFor(() => {
-      expect(openUrl).toHaveBeenCalledWith(
-        'obsidian://open?path=' + encodeURIComponent(expectedAbs)
-      );
+      expect(openWorkspacePath).toHaveBeenCalledWith(expectedAbs);
     });
   });
 

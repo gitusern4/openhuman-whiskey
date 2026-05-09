@@ -37,6 +37,7 @@ import {
   memoryTreeResetTree,
   memoryTreeWipeAll,
 } from '../../utils/tauriCommands';
+import { openWorkspacePath } from '../../utils/workspaceLinks';
 import { MemoryGraph } from './MemoryGraph';
 import { MemorySources } from './MemorySources';
 import { WhatsAppMemorySection } from './WhatsAppMemorySection';
@@ -77,6 +78,14 @@ async function openVaultInObsidian(contentRootAbs: string): Promise<void> {
     await openUrl(url);
   } catch (err) {
     console.error('[ui-flow][memory-workspace] openUrl failed', err);
+  }
+}
+
+async function revealVaultInWorkspace(contentRootAbs: string): Promise<void> {
+  try {
+    await openWorkspacePath(contentRootAbs);
+  } catch (err) {
+    console.error('[ui-flow][memory-workspace] openWorkspacePath failed', err);
   }
 }
 
@@ -312,18 +321,32 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
             )}
           </button>
           {graph && (
-            <button
-              type="button"
-              onClick={() => void openVaultInObsidian(graph.content_root_abs)}
-              data-testid="memory-open-in-obsidian"
-              className="inline-flex items-center gap-2 rounded-lg
-                         bg-violet-500 px-4 py-2 text-sm font-semibold text-white
-                         shadow-sm transition-colors hover:bg-violet-600
-                         focus:outline-none focus:ring-2 focus:ring-violet-300"
-              title={`obsidian://open?path=${graph.content_root_abs}`}>
-              <ExternalLinkIcon />
-              View vault in Obsidian
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void openVaultInObsidian(graph.content_root_abs)}
+                data-testid="memory-open-in-obsidian"
+                className="inline-flex items-center gap-2 rounded-lg
+                           bg-violet-500 px-4 py-2 text-sm font-semibold text-white
+                           shadow-sm transition-colors hover:bg-violet-600
+                           focus:outline-none focus:ring-2 focus:ring-violet-300"
+                title={`obsidian://open?path=${graph.content_root_abs}`}>
+                <ExternalLinkIcon />
+                View vault in Obsidian
+              </button>
+              <button
+                type="button"
+                onClick={() => void revealVaultInWorkspace(graph.content_root_abs)}
+                data-testid="memory-reveal-workspace"
+                className="inline-flex items-center gap-2 rounded-lg
+                           bg-stone-500 px-4 py-2 text-sm font-semibold text-white
+                           shadow-sm transition-colors hover:bg-stone-600
+                           focus:outline-none focus:ring-2 focus:ring-stone-300"
+                title={`Open workspace folder: ${graph.content_root_abs}`}>
+                <FolderIcon />
+                Open Folder
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -480,6 +503,23 @@ function Spinner() {
       aria-hidden="true">
       <circle cx="12" cy="12" r="9" opacity="0.25" />
       <path d="M21 12a9 9 0 00-9-9" />
+    </svg>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
     </svg>
   );
 }

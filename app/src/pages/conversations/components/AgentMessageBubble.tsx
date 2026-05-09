@@ -4,6 +4,11 @@ import { OPENHUMAN_LINK_EVENT } from '../../../components/OpenhumanLinkModal';
 import { parseMarkdownTable } from '../../../utils/agentMessageBubbles';
 import { openUrl } from '../../../utils/openUrl';
 import {
+  getWorkspacePathFromHref,
+  isWorkspaceLink,
+  openWorkspacePath,
+} from '../../../utils/workspaceLinks';
+import {
   type AgentBubblePosition,
   getAgentBubbleChrome,
   isAllowedExternalHref,
@@ -61,7 +66,17 @@ export function BubbleMarkdown({
               href={href}
               onClick={e => {
                 e.preventDefault();
-                if (!href || !isAllowedExternalHref(href)) return;
+                if (!href) return;
+
+                if (isWorkspaceLink(href)) {
+                  const path = getWorkspacePathFromHref(href);
+                  if (path) {
+                    void openWorkspacePath(path).catch(console.error);
+                  }
+                  return;
+                }
+
+                if (!isAllowedExternalHref(href)) return;
                 void openUrl(href).catch(() => {
                   // Ignore launcher errors from OS URL handler failures.
                 });
@@ -87,7 +102,17 @@ export function TableCellMarkdown({ content }: { content: string }) {
               href={href}
               onClick={e => {
                 e.preventDefault();
-                if (!href || !isAllowedExternalHref(href)) return;
+                if (!href) return;
+
+                if (isWorkspaceLink(href)) {
+                  const path = getWorkspacePathFromHref(href);
+                  if (path) {
+                    void openWorkspacePath(path).catch(console.error);
+                  }
+                  return;
+                }
+
+                if (!isAllowedExternalHref(href)) return;
                 void openUrl(href).catch(() => {
                   // Ignore launcher errors from OS URL handler failures.
                 });

@@ -30,6 +30,7 @@ mod webview_accounts;
 mod webview_apis;
 mod whatsapp_scanner;
 mod window_state;
+mod workspace;
 
 #[cfg(target_os = "macos")]
 use tauri::WindowEvent;
@@ -1936,6 +1937,9 @@ pub fn run() {
             mascot_window_hide,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
+            workspace::open_workspace_path,
+            workspace::reveal_workspace_path,
+            workspace::read_workspace_file_string,
             meet_call::meet_call_open_window,
             meet_call::meet_call_close_window
         ])

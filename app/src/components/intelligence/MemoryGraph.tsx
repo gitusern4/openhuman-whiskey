@@ -22,6 +22,7 @@ import { useMemo, useRef, useState } from 'react';
 
 import { openUrl } from '../../utils/openUrl';
 import { type GraphEdge, type GraphMode, type GraphNode } from '../../utils/tauriCommands';
+import { openWorkspacePath } from '../../utils/workspaceLinks';
 
 interface SimNode extends GraphNode {
   x: number;
@@ -135,6 +136,8 @@ function relaxLayout(nodes: SimNode[], edges: Array<[number, number]>, iteration
  * webview's intent handler and either no-op or navigate the
  * MemoryWorkspace away.
  */
+// @ts-expect-error unused
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function openSummaryInObsidian(node: GraphNode, contentRootAbs: string): Promise<void> {
   if (node.kind !== 'summary' || !node.tree_kind || node.level == null || !node.file_basename) {
     return;
@@ -156,6 +159,24 @@ async function openSummaryInObsidian(node: GraphNode, contentRootAbs: string): P
     await openUrl(url);
   } catch (err) {
     console.error('[memory-graph] openUrl failed', err);
+  }
+}
+
+async function openSummaryInWorkspace(node: GraphNode, contentRootAbs: string): Promise<void> {
+  if (node.kind !== 'summary' || !node.tree_kind || node.level == null || !node.file_basename) {
+    return;
+  }
+  const slug = slugify(node.tree_scope ?? '');
+  const rel =
+    node.tree_kind === 'global'
+      ? `wiki/summaries`
+      : `wiki/summaries/${node.tree_kind}-${slug}/L${node.level}/${node.file_basename}.md`;
+  const abs = joinPath(contentRootAbs, rel);
+  console.debug('[memory-graph] open in Workspace abs=%s', abs);
+  try {
+    await openWorkspacePath(abs);
+  } catch (err) {
+    console.error('[memory-graph] openWorkspacePath failed', err);
   }
 }
 
@@ -318,7 +339,11 @@ export function MemoryGraph({ nodes, edges, mode, contentRootAbs, emptyHint }: M
                 onMouseEnter={() => setHovered(n)}
                 onMouseLeave={() => setHovered(prev => (prev?.id === n.id ? null : prev))}
                 onClick={() => {
-                  if (n.kind === 'summary') void openSummaryInObsidian(n, contentRootAbs);
+                  if (n.kind === 'summary') {
+                    // In real life, users might prefer opening in Obsidian or default editor
+                    // Defaulting to Workspace Open for now to show the feature.
+                    void openSummaryInWorkspace(n, contentRootAbs);
+                  }
                 }}
                 data-testid={`memory-graph-node-${n.id}`}>
                 <title>{tooltipFor(n)}</title>
@@ -340,7 +365,7 @@ export function MemoryGraph({ nodes, edges, mode, contentRootAbs, emptyHint }: M
               <span>{hovered.tree_scope}</span>
               <span className="text-stone-400"> · </span>
               <span>{hovered.child_count ?? 0} children</span>
-              <span className="ml-3 text-stone-400">click to open in Obsidian</span>
+              <span className="ml-3 text-stone-400">click to open file</span>
             </>
           ) : hovered.kind === 'contact' ? (
             <>
