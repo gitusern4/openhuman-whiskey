@@ -119,6 +119,14 @@ jobs:
             args: --target x86_64-pc-windows-msvc
             target: x86_64-pc-windows-msvc
             artifact_suffix: windows
+          # Windows ARM64 (Whiskey fork addition).
+          # CEF ships aarch64-pc-windows-msvc binaries since 147.x (verified on
+          # cef-builds.spotifycdn.com). VS 2022 Build Tools ARM64 component
+          # required on the runner (windows-latest already has it).
+          - platform: windows-latest
+            args: --target aarch64-pc-windows-msvc
+            target: aarch64-pc-windows-msvc
+            artifact_suffix: windows-arm64
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Keep in sync with DEFAULT_TELEGRAM_BOT_USERNAME_* in channels/controllers/ops.rs
@@ -147,7 +155,7 @@ jobs:
       - name: Install Rust (rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@1.93.0
         with:
-          targets: ${{ matrix.settings.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.settings.target == 'aarch64-pc-windows-msvc' && 'aarch64-pc-windows-msvc' || (matrix.settings.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '') }}
       - name: Install Tauri dependencies (ubuntu only)
         if: matrix.settings.platform == 'ubuntu-22.04'
         run: |
