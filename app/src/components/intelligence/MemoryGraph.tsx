@@ -136,9 +136,7 @@ function relaxLayout(nodes: SimNode[], edges: Array<[number, number]>, iteration
  * webview's intent handler and either no-op or navigate the
  * MemoryWorkspace away.
  */
-// @ts-expect-error unused
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function openSummaryInObsidian(node: GraphNode, contentRootAbs: string): Promise<void> {
+export async function openSummaryInObsidian(node: GraphNode, contentRootAbs: string): Promise<void> {
   if (node.kind !== 'summary' || !node.tree_kind || node.level == null || !node.file_basename) {
     return;
   }

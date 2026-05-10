@@ -1,11 +1,15 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { isWorkspaceLink, getWorkspacePathFromHref, openWorkspacePath, revealWorkspacePath, readWorkspaceFileString } from '../workspaceLinks';
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(),
-  isTauri: vi.fn(),
-}));
+import {
+  getWorkspacePathFromHref,
+  isWorkspaceLink,
+  openWorkspacePath,
+  readWorkspaceFileString,
+  revealWorkspacePath,
+} from '../workspaceLinks';
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 
 describe('workspaceLinks', () => {
   beforeEach(() => {
@@ -65,7 +69,9 @@ describe('workspaceLinks', () => {
 
     it('throws error for readWorkspaceFileString if isTauri is false', async () => {
       vi.mocked(isTauri).mockReturnValue(false);
-      await expect(readWorkspaceFileString('/test/path')).rejects.toThrow('Workspace file preview is only supported in Tauri.');
+      await expect(readWorkspaceFileString('/test/path')).rejects.toThrow(
+        'Workspace file preview is only supported in Tauri.'
+      );
     });
   });
 });

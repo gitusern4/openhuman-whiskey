@@ -1,6 +1,0 @@
-Make workspace links first-class
-
-This commit introduces a unified workspace-link and workspace-file interaction layer for the desktop app. It adds three distinct actions for local workspace paths: open, reveal, and preview.
-- It adds new Tauri commands `open_workspace_path`, `reveal_workspace_path`, and `read_workspace_file_string` in a new module `workspace.rs`.
-- Extends the conversations renderer so it can recognize workspace-local link patterns instead of only `http/https/mailto`.
-- Implements those capabilities into the Memory Workspace graph so summary nodes open natively without bouncing through custom links.

@@ -1,5 +1,5 @@
+use crate::workspace::resolve_and_validate;
 use std::path::{Path, PathBuf};
-use crate::workspace::{resolve_and_validate};
 
 #[test]
 fn resolve_and_validate_rejects_parent_traversal() {
