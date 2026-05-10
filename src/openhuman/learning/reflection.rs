@@ -107,20 +107,31 @@ impl ReflectionHook {
     }
 
     /// Build the reflection prompt from turn context.
+    ///
+    /// Whiskey fork: when the active mode supplies a
+    /// `reflection_prompt_override`, it replaces the upstream default
+    /// preamble. The turn-context sections (User/Assistant/Tools/Timing)
+    /// are still appended below so the schema the agent reflects against
+    /// is consistent. DefaultMode returns None → upstream behaviour.
     fn build_reflection_prompt(&self, ctx: &TurnContext) -> String {
-        let mut prompt = String::from(
-            "Analyze this completed agent turn and extract learnings.\n\
-             Return a JSON object with these fields:\n\
-             - \"observations\": array of strings — what worked, what failed, notable patterns\n\
-             - \"patterns\": array of strings — recurring patterns worth remembering\n\
-             - \"user_preferences\": array of strings — any user preferences detected\n\
-             - \"user_reflections\": array of strings — explicit reflections the user \
-             made about themselves, their goals, what they want to do differently, \
-             or what they want you to remember going forward. Only include statements \
-             the user clearly authored as a reflection (\"I realized…\", \"remember that I…\", \
-             \"going forward I want…\"). Leave empty if none.\n\n\
-             Keep each entry concise (one sentence). Return ONLY valid JSON, no markdown.\n\n",
-        );
+        let mode = crate::openhuman::modes::active_mode();
+        let preamble: String = match mode.reflection_prompt_override() {
+            Some(custom) => format!("{custom}\n\n"),
+            None => String::from(
+                "Analyze this completed agent turn and extract learnings.\n\
+                 Return a JSON object with these fields:\n\
+                 - \"observations\": array of strings — what worked, what failed, notable patterns\n\
+                 - \"patterns\": array of strings — recurring patterns worth remembering\n\
+                 - \"user_preferences\": array of strings — any user preferences detected\n\
+                 - \"user_reflections\": array of strings — explicit reflections the user \
+                 made about themselves, their goals, what they want to do differently, \
+                 or what they want you to remember going forward. Only include statements \
+                 the user clearly authored as a reflection (\"I realized…\", \"remember that I…\", \
+                 \"going forward I want…\"). Leave empty if none.\n\n\
+                 Keep each entry concise (one sentence). Return ONLY valid JSON, no markdown.\n\n",
+            ),
+        };
+        let mut prompt = preamble;
 
         prompt.push_str(&format!(
             "## User Message\n{}\n\n",

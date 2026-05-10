@@ -102,14 +102,29 @@ impl Provider for RouterProvider {
         let (provider_idx, resolved_model) = self.resolve(model);
 
         let (provider_name, provider) = &self.providers[provider_idx];
+        // Whiskey fork: prepend the active mode's persona prefix when set.
+        // DefaultMode returns None so this is a no-op for upstream behaviour.
+        // See `crate::openhuman::modes` for the trait + registry.
+        let mode = crate::openhuman::modes::active_mode();
+        let merged_system: Option<String> = match (mode.system_prompt_prefix(), system_prompt) {
+            (Some(prefix), Some(existing)) => {
+                Some(format!("{prefix}\n\n---\n\n{existing}"))
+            }
+            (Some(prefix), None) => Some(prefix.to_string()),
+            (None, Some(existing)) => Some(existing.to_string()),
+            (None, None) => None,
+        };
+        let merged_ref = merged_system.as_deref();
+
         tracing::info!(
             provider = provider_name.as_str(),
             model = resolved_model.as_str(),
+            mode = mode.id(),
             "Router dispatching request"
         );
 
         provider
-            .chat_with_system(system_prompt, message, &resolved_model, temperature)
+            .chat_with_system(merged_ref, message, &resolved_model, temperature)
             .await
     }
 
