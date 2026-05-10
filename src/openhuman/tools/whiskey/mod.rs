@@ -7,3 +7,6 @@
 //! per-mode visibility downstream.
 
 pub mod image_gen_pollinations;
+pub mod image_gen_tool;
+
+pub use image_gen_tool::{ImageGenPollinationsTool, TOOL_NAME as IMAGE_GEN_TOOL_NAME};

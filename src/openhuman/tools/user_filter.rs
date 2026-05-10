@@ -79,3 +79,72 @@ pub(crate) fn filter_tools_by_user_preference(
         );
     }
 }
+
+/// Whiskey fork: filter the tool registry down to the active mode's
+/// allowlist. `DefaultMode` returns `None` from `tool_allowlist()` so
+/// this is a no-op when the user is in default mode — upstream
+/// behaviour preserved.
+///
+/// Modes that DO supply an allowlist (e.g. `WhiskeyMode`) restrict the
+/// agent to a deliberate subset for safety. Whiskey explicitly excludes
+/// shell/execute tools so the trading-mentor mode cannot run arbitrary
+/// host commands even if the LLM tries.
+pub(crate) fn filter_tools_by_active_mode(
+    tools: &mut Vec<Box<dyn crate::openhuman::tools::Tool>>,
+) {
+    let mode = crate::openhuman::modes::active_mode();
+    let Some(allowlist) = mode.tool_allowlist() else {
+        return;
+    };
+    let allowed: HashSet<&str> = allowlist.iter().copied().collect();
+
+    let before = tools.len();
+    tools.retain(|tool| allowed.contains(tool.name()));
+    let after = tools.len();
+
+    if before != after {
+        log::info!(
+            "[tool-filter] active mode '{}' allowlist: {} → {} tools ({} removed)",
+            mode.id(),
+            before,
+            after,
+            before - after
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::modes::{set_active_mode, DefaultMode, WhiskeyMode};
+    use serial_test::serial;
+
+    fn reset_to_default() {
+        let _ = set_active_mode(DefaultMode::ID);
+    }
+
+    #[test]
+    #[serial]
+    fn default_mode_does_not_filter() {
+        reset_to_default();
+        // No real tools needed — the allowlist short-circuit triggers
+        // before any retain pass.
+        let mut tools: Vec<Box<dyn crate::openhuman::tools::Tool>> = Vec::new();
+        filter_tools_by_active_mode(&mut tools);
+        assert!(tools.is_empty()); // Empty in == empty out, no panic.
+    }
+
+    #[test]
+    #[serial]
+    fn whiskey_mode_allowlist_is_consulted() {
+        // Switch to Whiskey, verify the allowlist contains expected
+        // tools. The actual retain on a non-empty Vec is exercised by
+        // integration tests that build a real tool registry.
+        let _ = set_active_mode(WhiskeyMode::ID);
+        let mode = crate::openhuman::modes::active_mode();
+        let allowlist = mode.tool_allowlist().expect("whiskey allowlists tools");
+        assert!(allowlist.iter().any(|t| *t == "image_gen.pollinations"));
+        assert!(!allowlist.iter().any(|t| t.contains("shell")));
+        reset_to_default();
+    }
+}

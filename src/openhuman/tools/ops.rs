@@ -152,6 +152,13 @@ pub fn all_tools_with_runtime(
             security.clone(),
             workspace_dir.to_path_buf(),
         )),
+        // Whiskey fork: free image generation via Pollinations.ai.
+        // No API key, no quota, useful for concept maps + scratch art.
+        // Per-mode visibility is enforced separately by the active
+        // mode's `tool_allowlist()` if it sets one.
+        Box::new(crate::openhuman::tools::whiskey::ImageGenPollinationsTool::new(
+            workspace_dir.to_path_buf(),
+        )),
     ];
 
     if browser_config.enabled {
@@ -411,6 +418,12 @@ pub fn all_tools_with_runtime(
     } else {
         tracing::debug!("[lsp] capability gate off (set OPENHUMAN_LSP_ENABLED=1 to register)");
     }
+
+    // Whiskey fork: filter the registry by the active mode's allowlist.
+    // DefaultMode returns no allowlist → no-op (upstream behaviour).
+    // Non-default modes (e.g. WhiskeyMode) restrict the agent to a
+    // deliberate subset for safety.
+    crate::openhuman::tools::user_filter::filter_tools_by_active_mode(&mut tools);
 
     tools
 }
