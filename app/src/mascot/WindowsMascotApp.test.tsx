@@ -1,24 +1,38 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Static import is fine — the mocks above are hoisted by vitest.
+import WindowsMascotApp from './WindowsMascotApp';
+
 // --- Tauri API mocks ---------------------------------------------------------
 // Mock the two @tauri-apps modules WindowsMascotApp imports from. We hold
 // the mock fns in module-scope vars so each test can assert against them
 // and override return values per-case.
-const mockInvoke = vi.fn(async () => undefined);
-let mockIsTauri = vi.fn(() => true);
-const mockStartDragging = vi.fn(async () => undefined);
-const mockListen = vi.fn(async () => () => undefined);
+//
+// Explicit generic signatures on each `vi.fn<>()` because TypeScript would
+// otherwise infer zero-arg shapes from the default factories and reject the
+// `mockImplementation(async (cmd) => ...)` overrides used by the
+// error-handling tests below.
+type UnlistenFn = () => void;
+type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+type IsTauriFn = () => boolean;
+type StartDraggingFn = () => Promise<void>;
+type ListenFn = (event: string, handler: (event: unknown) => void) => Promise<UnlistenFn>;
+
+const mockInvoke = vi.fn<InvokeFn>(async () => undefined);
+let mockIsTauri = vi.fn<IsTauriFn>(() => true);
+const mockStartDragging = vi.fn<StartDraggingFn>(async () => undefined);
+const mockListen = vi.fn<ListenFn>(async () => () => undefined);
 
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => mockInvoke(...args),
-  isTauri: (...args: unknown[]) => mockIsTauri(...args),
+  invoke: (cmd: string, args?: Record<string, unknown>) => mockInvoke(cmd, args),
+  isTauri: () => mockIsTauri(),
 }));
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
-    listen: (...args: unknown[]) => mockListen(...args),
-    startDragging: (...args: unknown[]) => mockStartDragging(...args),
+    listen: (event: string, handler: (event: unknown) => void) => mockListen(event, handler),
+    startDragging: () => mockStartDragging(),
   }),
 }));
 
@@ -28,9 +42,6 @@ vi.mock('@tauri-apps/api/window', () => ({
 vi.mock('../features/human/Mascot', () => ({
   YellowMascot: () => <div data-testid="yellow-mascot-stub" />,
 }));
-
-// Static import is fine — the mocks above are hoisted by vitest.
-import WindowsMascotApp from './WindowsMascotApp';
 
 const ROOT_TESTID = 'windows-mascot-root';
 
@@ -70,7 +81,9 @@ describe('WindowsMascotApp', () => {
     mockListen.mockImplementationOnce(async () => unlisten);
 
     const { unmount } = render(<WindowsMascotApp />);
-    await waitFor(() => expect(mockListen).toHaveBeenCalledWith('tauri://move', expect.any(Function)));
+    await waitFor(() =>
+      expect(mockListen).toHaveBeenCalledWith('tauri://move', expect.any(Function))
+    );
 
     unmount();
     // listen() resolves before unmount fires the cleanup, but the
@@ -85,7 +98,10 @@ describe('WindowsMascotApp', () => {
     fireDragSequence({ x: 50, y: 50 }, { x: 51, y: 51 });
 
     expect(mockStartDragging).not.toHaveBeenCalled();
-    expect(mockInvoke).toHaveBeenCalledWith('activate_main_window');
+    // The wrapper forwards (cmd, args) to mockInvoke; args is `undefined`
+    // when WindowsMascotApp calls `invoke('activate_main_window')` with
+    // no payload. Match the literal call shape, not the user-facing API.
+    expect(mockInvoke).toHaveBeenCalledWith('activate_main_window', undefined);
   });
 
   it('treats a supra-threshold pointer move as a drag and calls startDragging', () => {
@@ -111,7 +127,7 @@ describe('WindowsMascotApp', () => {
     capturedHandler?.({ payload: { x: 1, y: 2 } });
 
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith('mascot_window_save_position'),
+      expect(mockInvoke).toHaveBeenCalledWith('mascot_window_save_position', undefined)
     );
   });
 
@@ -134,7 +150,7 @@ describe('WindowsMascotApp', () => {
     fireDragSequence({ x: 0, y: 0 }, { x: 100, y: 100 });
 
     await waitFor(() =>
-      expect(warnSpy).toHaveBeenCalledWith('[mascot-win] startDragging failed', expect.any(Error)),
+      expect(warnSpy).toHaveBeenCalledWith('[mascot-win] startDragging failed', expect.any(Error))
     );
   });
 
@@ -151,8 +167,8 @@ describe('WindowsMascotApp', () => {
     await waitFor(() =>
       expect(warnSpy).toHaveBeenCalledWith(
         '[mascot-win] activate_main_window failed',
-        expect.any(Error),
-      ),
+        expect.any(Error)
+      )
     );
   });
 });
