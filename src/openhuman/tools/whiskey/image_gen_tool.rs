@@ -123,7 +123,6 @@ impl Tool for ImageGenPollinationsTool {
                 Ok(ToolResult {
                     content: vec![ToolContent::Text { text: msg }],
                     is_error: true,
-                    structured_content: None,
                     markdown_formatted: None,
                 })
             }
