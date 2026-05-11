@@ -112,10 +112,8 @@ pub(crate) fn show(app: &AppHandle<AppRuntime>) -> Result<(), String> {
     )) {
         log::warn!("[mascot-windows] set_position after build failed: {err}");
     }
-    if let Err(err) = window.set_size(PhysicalSize::new(
-        MASCOT_WIDTH as u32,
-        MASCOT_HEIGHT as u32,
-    )) {
+    if let Err(err) = window.set_size(PhysicalSize::new(MASCOT_WIDTH as u32, MASCOT_HEIGHT as u32))
+    {
         log::warn!("[mascot-windows] set_size after build failed: {err}");
     }
 
@@ -179,7 +177,10 @@ fn default_bottom_right(app: &AppHandle<AppRuntime>) -> (i32, i32) {
     let Some(window) = app.get_webview_window("main") else {
         return (DEFAULT_EDGE_MARGIN, DEFAULT_EDGE_MARGIN);
     };
-    let monitor = match window.primary_monitor().or_else(|_| window.current_monitor()) {
+    let monitor = match window
+        .primary_monitor()
+        .or_else(|_| window.current_monitor())
+    {
         Ok(Some(m)) => m,
         _ => return (DEFAULT_EDGE_MARGIN, DEFAULT_EDGE_MARGIN),
     };

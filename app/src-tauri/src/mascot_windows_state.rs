@@ -109,9 +109,7 @@ pub(crate) fn save_state(x: i32, y: i32, width: u32, height: u32) {
             path.display()
         );
     } else {
-        log::info!(
-            "[mascot-windows-state] saved x={x} y={y} w={width} h={height}"
-        );
+        log::info!("[mascot-windows-state] saved x={x} y={y} w={width} h={height}");
     }
 }
 
