@@ -42,7 +42,7 @@ const WindowsMascotApp = () => {
    */
   const savePosition = useCallback(() => {
     if (!isTauri()) return;
-    invoke('mascot_window_save_position').catch((err) => {
+    invoke('mascot_window_save_position').catch(err => {
       console.warn('[mascot-win] save position failed', err);
     });
   }, []);
@@ -58,10 +58,10 @@ const WindowsMascotApp = () => {
     w.listen('tauri://move', () => {
       savePosition();
     })
-      .then((unlistenFn) => {
+      .then(unlistenFn => {
         unlisten = unlistenFn;
       })
-      .catch((err) => {
+      .catch(err => {
         console.warn('[mascot-win] failed to subscribe to tauri://move', err);
       });
     return () => {
@@ -93,7 +93,7 @@ const WindowsMascotApp = () => {
     if (!isTauri()) return;
     getCurrentWindow()
       .startDragging()
-      .catch((err) => {
+      .catch(err => {
         console.warn('[mascot-win] startDragging failed', err);
       });
   }, []);
@@ -105,7 +105,7 @@ const WindowsMascotApp = () => {
     if (wasDrag) return;
     // Single-click: pop the main window. Tauri command from lib.rs.
     if (!isTauri()) return;
-    invoke('activate_main_window').catch((err) => {
+    invoke('activate_main_window').catch(err => {
       console.warn('[mascot-win] activate_main_window failed', err);
     });
   }, []);

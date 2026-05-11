@@ -114,9 +114,10 @@ function bootRender() {
 // WebviewWindow but doesn't render any user-scoped UI either, so we
 // skip the user bootstrap on both mascot paths to keep first paint
 // fast and avoid an unnecessary IPC.
-const activeUserBootstrap = isMascotWindow || isWindowsMascotWindow
-  ? Promise.resolve<string | null>(null)
-  : getActiveUserIdFromCore();
+const activeUserBootstrap =
+  isMascotWindow || isWindowsMascotWindow
+    ? Promise.resolve<string | null>(null)
+    : getActiveUserIdFromCore();
 
 activeUserBootstrap
   .then(id => primeActiveUserId(id))
