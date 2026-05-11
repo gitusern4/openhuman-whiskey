@@ -8,13 +8,48 @@ and a Whiskey trading-mentor mode. It is in active development on the
 
 ### CI / build
 
-- **`aarch64-pc-windows-msvc` added to `.github/workflows/build-desktop.yml`** matrix.
-  The Rust toolchain step now installs that target on Windows ARM64 runs.
-  CEF ships Windows ARM64 binaries since 147.x (verified on
-  cef-builds.spotifycdn.com), so the existing CEF caching paths just work.
+- **`aarch64-pc-windows-msvc` added to `.github/workflows/build-desktop.yml`** matrix
+  + standalone `verify-arm64.yml` (`workflow_dispatch`) for ad-hoc verification.
 - Local toolchain verified: VS 2022 Build Tools 2022 with ARM64 component
   is present, `aarch64-pc-windows-msvc` rustup target installed, pnpm
   10.10.0 installed, Tauri CLI installed, Node v24, gh authenticated.
+- **PR-time CI: 17/17 green** on commit `d86757a2` (Linux + frontend + tests).
+  The fork's own changes (modes module, Pollinations tool, allowlist filter)
+  compile and ship clean on x86_64.
+
+### Native ARM64 Windows build: blocked on upstream deps (May 11 finding)
+
+First end-to-end ARM64 Windows build was triggered via `verify-arm64.yml`
+on commit `fd439756`. Outcome: build proceeded through Rust toolchain
+install + CEF + tauri-cli install + dependency install + frontend build,
+then **failed** at `cargo tauri build` on two transitively-vendored
+native C/C++ dependencies that do not yet support
+`aarch64-pc-windows-msvc`:
+
+1. **`whisper-rs-sys v0.15.0`** (vendored fork at
+   `tinyhumansai/whisper-rs-sys`) — the bundled `whisper.cpp` build
+   script aborts on ARM64. Likely SIMD intrinsics or a build-flag
+   matrix that does not include the ARM64 Windows target.
+2. **`cef-dll-sys v146.4.1+146.0.9`** — `libcef_dll_wrapper` C++
+   wrapper compile fails for ARM64. Root cause: the vendored
+   `tauri-cef` is pinned to **CEF 146.x**, but Spotify's CEF builds
+   only ship `windowsarm64` binaries starting at **CEF 147.x**.
+   Bumping the vendored CEF version is the structural fix; on the
+   wire that means a coordinated upstream PR against
+   `app/src-tauri/vendor/tauri-cef`.
+
+Both are real porting projects (not drive-by fixes). Estimated effort:
+~2 days for `whisper-rs-sys` ARM64 build-script work; ~1 week for
+the CEF 146 → 147 vendor bump (plus regression testing of CEF API
+changes in the Tauri shell).
+
+**Mitigation in effect** (per the original Risk table): native ARM64
+Windows builds are deferred. Day-1 fork ships as **x86_64 Windows
+emulated under Windows-on-ARM** (the user already had this MSI
+running locally). The `verify-arm64.yml` workflow stays in the tree
+so when the upstream native deps gain ARM64 support, a single
+`gh workflow run verify-arm64.yml` re-tests the path with no extra
+plumbing.
 
 ### Modes module (`src/openhuman/modes/`)
 
