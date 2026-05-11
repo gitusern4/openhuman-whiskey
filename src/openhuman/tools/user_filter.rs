@@ -89,9 +89,7 @@ pub(crate) fn filter_tools_by_user_preference(
 /// agent to a deliberate subset for safety. Whiskey explicitly excludes
 /// shell/execute tools so the trading-mentor mode cannot run arbitrary
 /// host commands even if the LLM tries.
-pub(crate) fn filter_tools_by_active_mode(
-    tools: &mut Vec<Box<dyn crate::openhuman::tools::Tool>>,
-) {
+pub(crate) fn filter_tools_by_active_mode(tools: &mut Vec<Box<dyn crate::openhuman::tools::Tool>>) {
     let mode = crate::openhuman::modes::active_mode();
     let Some(allowlist) = mode.tool_allowlist() else {
         return;

@@ -156,9 +156,11 @@ pub fn all_tools_with_runtime(
         // No API key, no quota, useful for concept maps + scratch art.
         // Per-mode visibility is enforced separately by the active
         // mode's `tool_allowlist()` if it sets one.
-        Box::new(crate::openhuman::tools::whiskey::ImageGenPollinationsTool::new(
-            workspace_dir.to_path_buf(),
-        )),
+        Box::new(
+            crate::openhuman::tools::whiskey::ImageGenPollinationsTool::new(
+                workspace_dir.to_path_buf(),
+            ),
+        ),
     ];
 
     if browser_config.enabled {

@@ -155,9 +155,7 @@ pub async fn generate(
 
 fn build_url(prompt: &str, width: u32, height: u32, seed: Option<u32>, model: &str) -> String {
     let encoded = urlencoding::encode(prompt);
-    let seed_param = seed
-        .map(|s| format!("&seed={s}"))
-        .unwrap_or_default();
+    let seed_param = seed.map(|s| format!("&seed={s}")).unwrap_or_default();
     format!(
         "https://image.pollinations.ai/prompt/{encoded}?width={width}&height={height}&model={model}&nologo=true{seed_param}"
     )
@@ -169,13 +167,7 @@ fn generate_filename(prompt: &str, seed: Option<u32>) -> String {
     let mut slug: String = prompt
         .chars()
         .take(32)
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c
-            } else {
-                '-'
-            }
-        })
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
     slug = slug.trim_matches('-').to_string();
     if slug.is_empty() {

@@ -142,7 +142,10 @@ pub fn dhash_border(frame: &Frame, rect: Rect) -> u64 {
     // For simplicity (and because the ring is what actually represents
     // "edge of the ROI") we sample a single-pixel-thick perimeter band that
     // is `BORDER_PX`-wide on the inside of `rect` (clamped to rect size).
-    let band = DHASH_BORDER_PX.min(rect.width / 2).min(rect.height / 2).max(1);
+    let band = DHASH_BORDER_PX
+        .min(rect.width / 2)
+        .min(rect.height / 2)
+        .max(1);
 
     let mut grid = [[0u32; 9]; 8];
     let mut counts = [[0u32; 9]; 8];

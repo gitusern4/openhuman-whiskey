@@ -93,8 +93,8 @@ impl Tool for ImageGenPollinationsTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let request: ImageGenRequest = serde_json::from_value(args)
-            .map_err(|e| anyhow::anyhow!("invalid arguments: {e}"))?;
+        let request: ImageGenRequest =
+            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("invalid arguments: {e}"))?;
         match generate(request, &self.save_dir).await {
             Ok(resp) => {
                 let payload = json!({

@@ -83,7 +83,11 @@ pub fn active_mode() -> SharedMode {
 pub fn set_active_mode(id: &str) -> Result<(), String> {
     match REGISTRY.get(id) {
         Some(mode) => {
-            log::info!("[modes] switching active mode: {} -> {}", active_mode().id(), id);
+            log::info!(
+                "[modes] switching active mode: {} -> {}",
+                active_mode().id(),
+                id
+            );
             *ACTIVE.write() = mode;
             Ok(())
         }

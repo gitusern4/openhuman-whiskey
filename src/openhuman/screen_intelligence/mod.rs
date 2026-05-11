@@ -9,10 +9,6 @@ mod capture;
 mod capture_worker;
 mod engine;
 
-/// Windows screen-watch submodule — WGC capture, anchored ROIs, Tesseract OCR,
-/// idle gating. macOS / Linux builds skip this entirely via the cfg gate.
-#[cfg(target_os = "windows")]
-pub mod windows;
 mod helpers;
 mod image_processing;
 mod input;
@@ -22,6 +18,10 @@ mod processing_worker;
 mod state;
 mod types;
 mod vision;
+/// Windows screen-watch submodule — WGC capture, anchored ROIs, Tesseract OCR,
+/// idle gating. macOS / Linux builds skip this entirely via the cfg gate.
+#[cfg(target_os = "windows")]
+pub mod windows;
 
 pub use ops as rpc;
 pub use ops::*;

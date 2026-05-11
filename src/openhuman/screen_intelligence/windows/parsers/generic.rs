@@ -13,8 +13,7 @@ use regex::Regex;
 ///   "$123.45", "+$123.45", "$-50.00", "P/L: $1,234.56"
 /// Returns the numeric value as `f64`, or `None` if no match.
 pub fn extract_dollar_amount(text: &str) -> Option<f64> {
-    static RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"[+\-]?\$\s*-?([\d,]+(?:\.\d+)?)").unwrap());
+    static RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[+\-]?\$\s*-?([\d,]+(?:\.\d+)?)").unwrap());
     let caps = RE.captures(text)?;
     let raw = caps.get(1)?.as_str().replace(',', "");
     raw.parse::<f64>().ok().map(|v| {
@@ -56,8 +55,7 @@ pub fn extract_quote_price(text: &str) -> Option<f64> {
     if text.contains('$') {
         return extract_dollar_amount(text);
     }
-    static RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(\d+\.\d+)").unwrap());
+    static RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\d+\.\d+)").unwrap());
     let caps = RE.captures(text)?;
     caps.get(1)?.as_str().parse::<f64>().ok()
 }
@@ -68,9 +66,8 @@ pub fn extract_quote_price(text: &str) -> Option<f64> {
 pub fn extract_symbols(text: &str) -> Vec<String> {
     static RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([A-Z]{1,5})\b").unwrap());
     const STOP: &[&str] = &[
-        "PNL", "P", "L", "USD", "EUR", "GBP", "JPY", "USDT", "USDC",
-        "BUY", "SELL", "LONG", "SHORT", "BID", "ASK", "LAST", "OPEN",
-        "HIGH", "LOW", "CLOSE", "VOL",
+        "PNL", "P", "L", "USD", "EUR", "GBP", "JPY", "USDT", "USDC", "BUY", "SELL", "LONG",
+        "SHORT", "BID", "ASK", "LAST", "OPEN", "HIGH", "LOW", "CLOSE", "VOL",
     ];
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();

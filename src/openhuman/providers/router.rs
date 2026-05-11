@@ -107,9 +107,7 @@ impl Provider for RouterProvider {
         // See `crate::openhuman::modes` for the trait + registry.
         let mode = crate::openhuman::modes::active_mode();
         let merged_system: Option<String> = match (mode.system_prompt_prefix(), system_prompt) {
-            (Some(prefix), Some(existing)) => {
-                Some(format!("{prefix}\n\n---\n\n{existing}"))
-            }
+            (Some(prefix), Some(existing)) => Some(format!("{prefix}\n\n---\n\n{existing}")),
             (Some(prefix), None) => Some(prefix.to_string()),
             (None, Some(existing)) => Some(existing.to_string()),
             (None, None) => None,
