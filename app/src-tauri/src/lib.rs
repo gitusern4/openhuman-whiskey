@@ -15,6 +15,10 @@ mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
+// Whiskey fork — global hotkey to summon/hide the mascot from any
+// foreground app (default CmdOrCtrl+Shift+Space). Cross-platform; the
+// per-OS dispatch lives in `mascot_window_show` / `_hide` in this file.
+mod mascot_summon_hotkey;
 // Whiskey fork — Windows mascot path. Parallel to mascot_native_window
 // (which is macOS-only). Both are gated on their target_os; lib.rs
 // dispatches via #[cfg] branches inside mascot_window_show / hide.
@@ -1657,6 +1661,13 @@ pub fn run() {
             // until the Ready event fires. Creating the tray here would panic on
             // Linux with "GTK has not been initialized".
             log::info!("[tray] deferring tray setup to RunEvent::Ready");
+
+            // Whiskey fork — register the default mascot-summon hotkey
+            // (CmdOrCtrl+Shift+Space). Best-effort: a busy binding logs
+            // a warn here but never aborts setup. See
+            // `mascot_summon_hotkey::register_default` for the full
+            // pattern + per-OS expansion.
+            mascot_summon_hotkey::register_default(&app.handle().clone());
 
             // CEF cold-start warmup. Spawns a 1×1 hidden child webview on
             // the main window at `about:blank` so CEF's render-process /
