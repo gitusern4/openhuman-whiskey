@@ -141,6 +141,18 @@ objc2-web-kit = { version = "0.3.2", features = ["block2"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 notify-rust = { version = "4", default-features = false, features = ["dbus"] }
 
+# Whiskey fork — Windows-only mascot path. The vendored CEF runtime
+# can't render transparent windowed-mode browsers on macOS (see
+# `mascot_native_window.rs`); on Windows we attempt the same UX via a
+# Tauri WebviewWindow with `transparent + always_on_top`. The
+# `windows` crate is used solely to apply WDA_EXCLUDEFROMCAPTURE so
+# screen-shares don't broadcast the mascot.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
 [features]
 default = []
 # `custom-protocol` switches Tauri from `devUrl` (vite dev server) to the

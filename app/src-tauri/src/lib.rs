@@ -15,6 +15,13 @@ mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
+// Whiskey fork — Windows mascot path. Parallel to mascot_native_window
+// (which is macOS-only). Both are gated on their target_os; lib.rs
+// dispatches via #[cfg] branches inside mascot_window_show / hide.
+#[cfg(target_os = "windows")]
+mod mascot_windows_state;
+#[cfg(target_os = "windows")]
+mod mascot_windows_window;
 mod meet_audio;
 mod meet_call;
 mod meet_scanner;
@@ -776,11 +783,20 @@ fn activate_main_window(app: AppHandle<AppRuntime>) -> Result<(), String> {
     show_main_window(&app)
 }
 
-/// Show the floating mascot. macOS: native NSPanel + WKWebView (so the
-/// window is actually transparent — vendored tauri-cef can't render
-/// transparent windowed-mode browsers). Loads the Vite dev URL in
-/// development and the bundled `index.html` in production. Other OSes:
-/// not yet wired up.
+/// Show the floating mascot.
+///
+/// Per-platform implementations:
+/// - macOS: native NSPanel + WKWebView (in [`mascot_native_window`]).
+///   The vendored tauri-cef runtime can't render transparent
+///   windowed-mode browsers, so this bypasses Tauri entirely.
+/// - Windows (Whiskey fork addition): Tauri WebviewWindow with
+///   `transparent + always_on_top + decorations(false)` (in
+///   [`mascot_windows_window`]). Whether the window is actually
+///   transparent depends on whether the CEF runtime honors the
+///   transparency hint on Windows; if it doesn't, the window appears
+///   as an opaque small square that's still always-on-top + draggable.
+///   A native Win32 + WebView2 fallback is the Phase-2 fix.
+/// - Linux: not yet wired.
 #[tauri::command]
 fn mascot_window_show(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[mascot-window] show requested");
@@ -788,10 +804,14 @@ fn mascot_window_show(app: AppHandle<AppRuntime>) -> Result<(), String> {
     {
         return mascot_native_window::show(&app);
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        return mascot_windows_window::show(&app);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = app;
-        Err("floating mascot window is macOS-only for now".into())
+        Err("floating mascot window is not yet wired for this platform".into())
     }
 }
 
@@ -805,20 +825,53 @@ fn mascot_window_hide(app: AppHandle<AppRuntime>) -> Result<(), String> {
         mascot_native_window::hide();
         Ok(())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        mascot_windows_window::hide(&app)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = app;
         Ok(())
     }
 }
 
+/// Whiskey fork: persist the mascot's current position. Called from
+/// the React mascot frontend after the user drags the window so the
+/// next launch lands in the same spot. Windows-only today; macOS uses
+/// a fixed bottom-right anchor.
+#[tauri::command]
+fn mascot_window_save_position(app: AppHandle<AppRuntime>) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        mascot_windows_window::save_current_position(&app);
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        Ok(())
+    }
+}
+
+/// Whether the floating mascot is currently shown.
+///
+/// Unified signature across platforms (takes `app` even on macOS so
+/// callers don't need a `cfg` ladder at every call site). The macOS
+/// implementation ignores `app` because the panel is owned by a
+/// thread-local outside Tauri's window registry.
 #[cfg(target_os = "macos")]
-fn mascot_native_window_is_open() -> bool {
+fn mascot_native_window_is_open(_app: &AppHandle<AppRuntime>) -> bool {
     mascot_native_window::is_open()
 }
 
-#[cfg(not(target_os = "macos"))]
-fn mascot_native_window_is_open() -> bool {
+#[cfg(target_os = "windows")]
+fn mascot_native_window_is_open(app: &AppHandle<AppRuntime>) -> bool {
+    mascot_windows_window::is_open(app)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn mascot_native_window_is_open(_app: &AppHandle<AppRuntime>) -> bool {
     false
 }
 
@@ -858,11 +911,12 @@ fn setup_tray(app: &AppHandle<AppRuntime>) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let quit_item = MenuItem::with_id(app, "tray_quit", "Quit", true, None::<&str>)?;
-    // The floating mascot has a native NSPanel + WKWebView host, so the
-    // tray entry only does anything on macOS. Don't surface a menu item
-    // on Windows that's guaranteed to error — gate it to the platform
-    // where `mascot_window_show` actually works.
-    #[cfg(target_os = "macos")]
+    // Toggle-mascot tray entry. On macOS the floating mascot is a
+    // native NSPanel + WKWebView; on Windows (Whiskey fork addition)
+    // it's a Tauri WebviewWindow with always_on_top + transparent.
+    // Linux still has no mascot path — gate it out there to avoid a
+    // menu item that would always error.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     let menu = {
         let mascot_item = MenuItem::with_id(
             app,
@@ -873,7 +927,7 @@ fn setup_tray(app: &AppHandle<AppRuntime>) -> tauri::Result<()> {
         )?;
         Menu::with_items(app, &[&show_item, &mascot_item, &quit_item])?
     };
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
     let icon = app
@@ -893,7 +947,7 @@ fn setup_tray(app: &AppHandle<AppRuntime>) -> tauri::Result<()> {
             }
             "tray_toggle_mascot" => {
                 log::info!("[tray] action=toggle_mascot source=menu");
-                if mascot_native_window_is_open() {
+                if mascot_native_window_is_open(app) {
                     if let Err(err) = mascot_window_hide(app.clone()) {
                         log::error!("[tray] failed to hide mascot window: {err}");
                     }
@@ -1934,6 +1988,7 @@ pub fn run() {
             native_notifications::show_native_notification,
             mascot_window_show,
             mascot_window_hide,
+            mascot_window_save_position,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
             meet_call::meet_call_open_window,
