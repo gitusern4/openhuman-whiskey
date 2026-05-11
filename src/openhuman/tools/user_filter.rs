@@ -115,15 +115,20 @@ pub(crate) fn filter_tools_by_active_mode(tools: &mut Vec<Box<dyn crate::openhum
 mod tests {
     use super::*;
     use crate::openhuman::modes::{set_active_mode, DefaultMode, WhiskeyMode};
-    use serial_test::serial;
+    use std::sync::Mutex;
+
+    /// Process-wide lock so tests that mutate the global active-mode
+    /// pointer don't race. Single in-file Mutex keeps the project's
+    /// dev-dependency surface flat (no `serial_test` needed).
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn reset_to_default() {
         let _ = set_active_mode(DefaultMode::ID);
     }
 
     #[test]
-    #[serial]
     fn default_mode_does_not_filter() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         reset_to_default();
         // No real tools needed — the allowlist short-circuit triggers
         // before any retain pass.
@@ -133,15 +138,17 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn whiskey_mode_allowlist_is_consulted() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         // Switch to Whiskey, verify the allowlist contains expected
         // tools. The actual retain on a non-empty Vec is exercised by
         // integration tests that build a real tool registry.
         let _ = set_active_mode(WhiskeyMode::ID);
         let mode = crate::openhuman::modes::active_mode();
         let allowlist = mode.tool_allowlist().expect("whiskey allowlists tools");
-        assert!(allowlist.iter().any(|t| *t == "image_gen.pollinations"));
+        // Tool names must match `Tool::name()` strings exactly — the
+        // image-gen tool registers as `image_gen_pollinations`.
+        assert!(allowlist.iter().any(|t| *t == "image_gen_pollinations"));
         assert!(!allowlist.iter().any(|t| t.contains("shell")));
         reset_to_default();
     }

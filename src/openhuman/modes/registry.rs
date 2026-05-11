@@ -114,30 +114,36 @@ pub fn list_modes() -> Vec<ModeDescriptor> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
+    use std::sync::Mutex;
+
+    /// Process-wide lock so the four logical test cases below can mutate
+    /// the global active-mode pointer without races. Using a single
+    /// in-file `Mutex` instead of an external `serial_test` dev-dep
+    /// keeps the project's dependency surface flat.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn reset_to_default() {
         let _ = set_active_mode(DefaultMode::ID);
     }
 
     #[test]
-    #[serial]
     fn default_mode_is_active_at_startup() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         reset_to_default();
         assert_eq!(active_mode().id(), DefaultMode::ID);
     }
 
     #[test]
-    #[serial]
     fn list_includes_default_and_whiskey() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let ids: Vec<&str> = list_modes().into_iter().map(|d| d.id).collect();
         assert!(ids.contains(&DefaultMode::ID));
         assert!(ids.contains(&WhiskeyMode::ID));
     }
 
     #[test]
-    #[serial]
     fn switch_to_whiskey_then_back() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         reset_to_default();
         assert!(set_active_mode(WhiskeyMode::ID).is_ok());
         assert_eq!(active_mode().id(), WhiskeyMode::ID);
@@ -148,8 +154,8 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn switch_to_unknown_id_is_rejected() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         reset_to_default();
         let err = set_active_mode("does-not-exist").unwrap_err();
         assert!(err.contains("unknown mode id"));

@@ -108,7 +108,6 @@ impl Tool for ImageGenPollinationsTool {
                         text: payload.to_string(),
                     }],
                     is_error: false,
-                    structured_content: Some(payload),
                     markdown_formatted: None,
                 })
             }

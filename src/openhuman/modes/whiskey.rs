@@ -28,15 +28,22 @@ impl WhiskeyMode {
     /// Whitelisted tools while in Whiskey mode. Trading work is heavily
     /// reasoning + memory + image-gen; we deliberately do not expose
     /// shell / arbitrary-execute tools to keep blast radius small.
+    ///
+    /// Names MUST match the upstream `Tool::name()` strings (snake_case,
+    /// no dots) — the allowlist filter compares string-literally.
     const ALLOWED_TOOLS: &'static [&'static str] = &[
-        "memory.search",
-        "memory.fetch",
-        "memory.append",
-        "image_gen.pollinations",
-        "web.search",
-        "web.fetch",
-        "screen_intelligence.snapshot",
-        "screen_intelligence.subscribe",
+        // Memory access (read + write).
+        "memory_recall",
+        "memory_store",
+        "memory_tree",
+        // Whiskey fork: free image generation.
+        "image_gen_pollinations",
+        // Web research.
+        "web_fetch",
+        "web_search_tool",
+        "http_request",
+        // Plus the read-only timing primitives the agent leans on.
+        "current_time",
     ];
 
     /// Construct with the default memory root resolved from the user's
@@ -262,8 +269,9 @@ mod tests {
     fn whiskey_mode_tool_allowlist_excludes_shell() {
         let m = WhiskeyMode::new();
         let allowed = m.tool_allowlist().expect("whiskey allowlists tools");
-        assert!(allowed.iter().any(|t| t.starts_with("memory.")));
-        assert!(allowed.iter().any(|t| *t == "image_gen.pollinations"));
+        // At least one memory tool, the image-gen tool, no shell/execute.
+        assert!(allowed.iter().any(|t| t.starts_with("memory_")));
+        assert!(allowed.iter().any(|t| *t == "image_gen_pollinations"));
         assert!(!allowed.iter().any(|t| t.contains("shell")));
         assert!(!allowed.iter().any(|t| t.contains("execute")));
     }
