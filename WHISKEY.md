@@ -1,10 +1,64 @@
-# Whiskey fork — what's added, what's wired, what's left
+# Whiskey fork — status
 
-This fork of `tinyhumansai/openhuman` adds a switchable "modes" abstraction
-and a Whiskey trading-mentor mode. It is in active development on the
-`whiskey` branch.
+This fork of `tinyhumansai/openhuman` adds:
+1. A switchable agent-modes abstraction (Default + Whiskey trading mentor)
+2. A Windows mascot path parallel to the existing macOS native path
+3. A global summon hotkey
+4. A persona memory cache that brings the user's curated playbook into
+   every Whiskey-mode prompt
+5. A free image-gen tool via Pollinations.ai
 
-## What's done (Day 1 morning)
+**Branch state at d-day**: 18 commits on `whiskey` (PR #1 against
+upstream), **17/17 PR checks green** on the head commit `620573a5`.
+Every architectural layer of the Whiskey loop is wired end-to-end.
+
+The one piece that still doesn't work is **native ARM64 Windows builds**
+— blocked on two upstream-vendored native deps (`whisper-rs-sys` +
+`cef-dll-sys` pinned to CEF 146.x) that don't yet support
+`aarch64-pc-windows-msvc`. The fork ships as the existing x86_64
+Windows MSI under emulation; see "Native ARM64 Windows build" below
+for the porting plan.
+
+## End-to-end flow when the user switches to Whiskey mode
+
+```
+Settings → Modes → Whiskey
+       ↓
+ModesPanel.tsx → Tauri set_whiskey_mode("whiskey")
+       ↓
+crate::openhuman::modes::registry::set_active_mode
+       ↓
+process-wide ACTIVE pointer flips to Arc<WhiskeyMode>
+       ↓
+Next user message arrives.
+       ↓
+RouterProvider::chat_with_system
+       ├── reads active_mode().system_prompt_prefix() → Whiskey persona
+       ├── reads memory_cache::resolve(active_mode())  → reads + caches
+       │       additional_memory_roots() → ~/.claude/projects/.../memory/
+       │       whiskey_*.md, returns bounded markdown block
+       └── assemble_system_prompt(persona, memory, caller_system_prompt)
+              → "{persona}\n\n---\n\n{memory}\n\n---\n\n{caller}"
+       ↓
+LLM responds as Whiskey, grounded in the user's playbook + covenant.
+       ↓
+Post-turn: ReflectionHook uses active_mode().reflection_prompt_override()
+           → trading-only reflection schema.
+       ↓
+Tool call: filter_tools_by_active_mode in tools/ops.rs intersects the
+           registry with WhiskeyMode::tool_allowlist() → shell, execute,
+           dangerous tools are dropped before dispatch even sees them.
+       ↓
+Mascot: tray menu → "Toggle floating mascot" OR
+        global hotkey CmdOrCtrl+Shift+Space (mascot_summon_hotkey.rs)
+        → mascot_window_show → mascot_windows_window.rs creates a
+        Tauri WebviewWindow with always_on_top + transparent +
+        WDA_EXCLUDEFROMCAPTURE; React mounts WindowsMascotApp.tsx
+        which renders <YellowMascot face="idle"> + drag handler +
+        click-to-pop.
+```
+
+## What's done
 
 ### CI / build
 
@@ -86,11 +140,73 @@ source_url, bytes, elapsed_ms)`. `tokio::fs` everywhere.
 - `pub mod modes;` added to `src/openhuman/mod.rs`
 - `pub mod whiskey;` added to `src/openhuman/tools/mod.rs`
 
-## What's left to wire (in order of value)
+## What's left (intentionally — Phase 2)
 
-These are the integrations that turn the new modules from "compile-clean
-scaffolds" into a working Whiskey mode end-to-end. Each one is a small,
-focused PR.
+The end-to-end loop works. These are real follow-ups that didn't fit
+the "ship a complete Day-1 baseline" budget but have well-understood
+designs and would land cleanly on top of what's here.
+
+### 1. Native ARM64 Windows build
+**Blocker**: two upstream-vendored native deps need ARM64 support.
+  - `whisper-rs-sys`: bundled `whisper.cpp` build script aborts on
+    `aarch64-pc-windows-msvc` (likely SIMD intrinsics).
+    Fix: a few days of build-flag matrix work in the
+    `tinyhumansai/whisper-rs-sys` fork.
+  - `cef-dll-sys v146.4.1`: vendored `tauri-cef` is pinned to CEF
+    146.x; Spotify's CEF builds only ship `windowsarm64` binaries
+    starting at CEF 147.x. Fix: coordinated upstream PR against
+    `app/src-tauri/vendor/tauri-cef` to bump the CEF version (and
+    ride out whatever CEF API changes between 146 and 147).
+
+The `verify-arm64.yml` workflow stays in the tree; one
+`gh workflow run verify-arm64.yml` re-tests the path the moment the
+upstream native deps gain ARM64 support.
+
+### 2. Mascot transparency on Windows-CEF
+The mascot uses `WebviewWindowBuilder.transparent(true)`. Whether the
+vendored CEF runtime honours that on Windows is unverified — if the
+window paints opaque, the mascot is functionally complete but visually
+a small square instead of a free-floating sprite. The native fallback
+is a Win32 layered window + WebView2 (separate from CEF), parallel to
+the macOS NSPanel + WKWebView path. ~600 LOC of `windows-rs` work.
+
+### 3. Phase-2 Whiskey integrations (originally in the plan)
+Each is a self-contained module that consumes the existing
+infrastructure shipped here:
+  - **Screen-watch** for Windows trading platforms (WGC capture +
+    Tesseract OCR + Gemini Flash fallback for ambiguous fields). The
+    macOS-focused `screen_intelligence/` module is the API model;
+    `screen_intelligence/windows/` is the new submodule. Architecture
+    details + research are at the bottom of this file under
+    "Screen-watch on Windows".
+  - **Whiskey-trader hookup**: subscribe to screen-watch events,
+    cross-reference against `whiskey_playbook.md` A+ catalog, emit
+    setup suggestions via the existing `overlay::publish_attention`
+    bus, auto-log fills back to the playbook.
+  - **Heartbeat reflection swap**: extend `heartbeat::engine` (or
+    its `subconscious::engine` callee) to consult
+    `active_mode().heartbeat_prompt_override()`. Currently the
+    heartbeat path inherits the persona prefix via the router-level
+    injection but doesn't see Whiskey's bespoke heartbeat schema.
+  - **Persistent active-mode** across restarts. Today the active
+    mode resets to `default` on every process boot. Add a
+    `~/.openhuman/active_mode.toml` write on every `set_active_mode`
+    + a read at boot. ~30 LOC.
+  - **Hotkey customisability**: surface a `register_mascot_summon_hotkey`
+    Tauri command + a `HotkeyRecorder.tsx` settings entry, mirroring
+    the existing dictation hotkey UX.
+
+## Original "what's left to wire" plan (now historical — kept for diff)
+
+Items 1–10 below were the original Day-1 follow-up plan. **Items 1–4,
+6–10 are done** (in the commit history; see "What's done" above).
+**Item 5 (session-memory write path) is still open** — Whiskey writes
+session memories via the standard memory store today rather than
+appending to a dedicated `whiskey_session_log.md`. Low priority since
+the existing Claude Code Whiskey skill maintains its own log; re-add
+later if cross-skill memory becomes a real user request.
+
+
 
 ### 1. Inject mode prefix into the LLM request pipeline (~30 LOC)
 
