@@ -840,6 +840,36 @@ fn mascot_window_hide(app: AppHandle<AppRuntime>) -> Result<(), String> {
     }
 }
 
+/// Whiskey fork: list every registered agent mode for the settings
+/// picker. Returns the snapshot the frontend needs to render the
+/// dropdown — id (stable, used by `set_whiskey_mode`), display_name
+/// (user-visible), description (1-line tooltip).
+#[tauri::command]
+fn list_whiskey_modes() -> Vec<openhuman_core::openhuman::modes::ModeDescriptor> {
+    openhuman_core::openhuman::modes::list_modes()
+}
+
+/// Whiskey fork: switch the process-wide active mode. The id must be
+/// one returned from [`list_whiskey_modes`]; unknown ids return an
+/// `Err` with the registered set listed for diagnostics. The next
+/// LLM request will pick up the new mode's `system_prompt_prefix`,
+/// the next reflection will pick up its `reflection_prompt_override`,
+/// etc. — see `crate::openhuman::providers::router` for the hot path.
+#[tauri::command]
+fn set_whiskey_mode(id: String) -> Result<(), String> {
+    openhuman_core::openhuman::modes::set_active_mode(&id)
+}
+
+/// Whiskey fork: read the currently-active mode id. Lets the picker
+/// highlight the right row on first paint without a separate
+/// roundtrip per mode.
+#[tauri::command]
+fn get_active_whiskey_mode_id() -> String {
+    openhuman_core::openhuman::modes::active_mode()
+        .id()
+        .to_string()
+}
+
 /// Whiskey fork: persist the mascot's current position. Called from
 /// the React mascot frontend after the user drags the window so the
 /// next launch lands in the same spot. Windows-only today; macOS uses
@@ -2000,6 +2030,10 @@ pub fn run() {
             mascot_window_show,
             mascot_window_hide,
             mascot_window_save_position,
+            // Whiskey fork — agent-mode picker bridge.
+            list_whiskey_modes,
+            set_whiskey_mode,
+            get_active_whiskey_mode_id,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
             meet_call::meet_call_open_window,

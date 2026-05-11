@@ -16,6 +16,7 @@ import LocalModelPanel from '../components/settings/panels/LocalModelPanel';
 import MemoryDataPanel from '../components/settings/panels/MemoryDataPanel';
 import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import MessagingPanel from '../components/settings/panels/MessagingPanel';
+import ModesPanel from '../components/settings/panels/ModesPanel';
 import NotificationRoutingPanel from '../components/settings/panels/NotificationRoutingPanel';
 import NotificationsPanel from '../components/settings/panels/NotificationsPanel';
 import PrivacyPanel from '../components/settings/panels/PrivacyPanel';
@@ -194,6 +195,27 @@ const aiModelsSettingsItems = [
       </svg>
     ),
   },
+  {
+    // Whiskey fork — agent-mode picker. Lets the user switch the
+    // active persona (Default vs. Whiskey trading mentor). Wires to
+    // the Tauri commands list_whiskey_modes / set_whiskey_mode /
+    // get_active_whiskey_mode_id which bridge to the in-process
+    // `crate::openhuman::modes::registry`.
+    id: 'modes',
+    title: 'Modes',
+    description: 'Switch between agent personas (Default, Whiskey trading mentor, …)',
+    route: 'modes',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+        />
+      </svg>
+    ),
+  },
 ];
 
 const WrappedSettingsPage = ({ children }: { children: ReactNode }) => {
@@ -286,6 +308,8 @@ const Settings = () => {
           element={wrapSettingsPage(<NotificationRoutingPanel />)}
         />
         <Route path="ai" element={wrapSettingsPage(<AIPanel />)} />
+        {/* Whiskey fork — agent-mode picker. */}
+        <Route path="modes" element={wrapSettingsPage(<ModesPanel />)} />
         <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />
         <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
         <Route

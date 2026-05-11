@@ -18,10 +18,19 @@ use std::sync::Arc;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 
+use serde::Serialize;
+
 use super::{DefaultMode, Mode, ModeId, SharedMode, WhiskeyMode};
 
 /// Snapshot of one mode for the settings UI dropdown.
-#[derive(Debug, Clone)]
+///
+/// `Serialize` is implemented so this struct round-trips through Tauri
+/// IPC (the `list_modes` command in `app/src-tauri/src/lib.rs` returns
+/// `Vec<ModeDescriptor>` directly to the frontend mode picker).
+/// `id: &'static str` serializes to a JSON string fine; we only need
+/// the serialize half because the frontend never sends descriptors
+/// back — it just sends the `id` string to `set_active_mode`.
+#[derive(Debug, Clone, Serialize)]
 pub struct ModeDescriptor {
     pub id: &'static str,
     pub display_name: String,
