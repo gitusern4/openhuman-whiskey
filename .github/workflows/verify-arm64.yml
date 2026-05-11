@@ -1,0 +1,117 @@
+---
+# Whiskey fork — ARM64 Windows build verification.
+#
+# The PR-time `Build` workflow is Linux-only. The full per-platform
+# matrix lives inside `build-desktop.yml` as a `workflow_call` reusable
+# workflow that is normally only invoked by `release-staging.yml` and
+# `release-production.yml`. Those release flows do version bumps + tag
+# pushes + Sentry-DIF uploads — too heavyweight for a routine ARM64
+# smoke check.
+#
+# This workflow is the lightweight manual verification: a single matrix
+# row that builds the Tauri shell for `aarch64-pc-windows-msvc` and
+# uploads the resulting `.msi` and `.exe` as Actions artifacts. Fire it
+# from the Actions tab on the `whiskey` branch (or any branch) to
+# confirm the new ARM64 target compiles end-to-end. No tags, no
+# version bumps, no Sentry, no signing.
+name: Verify ARM64 Windows build
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Cargo profile (debug builds in ~half the time of release)."
+        type: choice
+        required: false
+        default: debug
+        options:
+          - debug
+          - release
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: verify-arm64-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-windows-arm64:
+    name: Build aarch64-pc-windows-msvc
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          cache: true
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+
+      - name: Install Rust toolchain (with ARM64 Windows target)
+        uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          targets: aarch64-pc-windows-msvc
+          components: rustfmt,clippy
+
+      # CEF download is ~400MB; cache per-target so reruns are fast.
+      - name: Cache CEF binary distribution
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/tauri-cef
+          key: cef-aarch64-pc-windows-msvc-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cef-aarch64-pc-windows-msvc-
+
+      - name: Cache vendored tauri-cli binary
+        id: tauri-cli-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri.exe
+          key: vendored-tauri-cli-windows-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
+
+      - name: Install vendored tauri-cli (cef-aware bundler)
+        if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
+
+      - name: Cache Cargo registry and git sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-registry-aarch64-pc-windows-msvc-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-registry-aarch64-pc-windows-msvc-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Tauri app (aarch64-pc-windows-msvc)
+        shell: bash
+        working-directory: app
+        env:
+          PROFILE_FLAG: ${{ inputs.profile == 'debug' && '--debug' || '' }}
+          # Same Vite OOM workaround the release workflow uses.
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: |
+          cargo tauri build $PROFILE_FLAG --target aarch64-pc-windows-msvc
+
+      - name: Upload installer artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openhuman-whiskey-aarch64-pc-windows-msvc-${{ inputs.profile }}
+          if-no-files-found: warn
+          path: |
+            app/src-tauri/target/aarch64-pc-windows-msvc/${{ inputs.profile }}/bundle/msi/*.msi
+            app/src-tauri/target/aarch64-pc-windows-msvc/${{ inputs.profile }}/bundle/nsis/*-setup.exe
+            target/aarch64-pc-windows-msvc/${{ inputs.profile }}/bundle/msi/*.msi
+            target/aarch64-pc-windows-msvc/${{ inputs.profile }}/bundle/nsis/*-setup.exe
