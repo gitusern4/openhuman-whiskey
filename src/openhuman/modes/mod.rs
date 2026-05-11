@@ -31,7 +31,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub use default::DefaultMode;
-pub use registry::{active_mode, set_active_mode, ModeRegistry};
+pub use registry::{active_mode, list_modes, set_active_mode, ModeDescriptor, ModeRegistry};
 pub use whiskey::WhiskeyMode;
 
 /// Stable string ID used for persistence in config + UI selection.

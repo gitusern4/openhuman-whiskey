@@ -123,7 +123,11 @@ describe('ModesPanel', () => {
   });
 
   it('surfaces a switch error without losing the existing active id', async () => {
-    let activeId = 'default';
+    // `const` because we only read it inside the closure — the test
+    // captures the *initial* server-side active id and asserts the
+    // panel doesn't optimistically flip away from it on a switch
+    // failure. We don't need to mutate it.
+    const activeId = 'default';
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_whiskey_modes') return FIXTURE_MODES;
       if (cmd === 'get_active_whiskey_mode_id') return activeId;
