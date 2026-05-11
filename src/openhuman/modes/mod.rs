@@ -24,6 +24,7 @@
 //!     `.md`-vault paths to the boot ingestion sweep.
 
 pub mod default;
+pub mod memory_cache;
 pub mod registry;
 pub mod whiskey;
 

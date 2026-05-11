@@ -3,6 +3,33 @@ use super::Provider;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
+/// Whiskey fork: assemble the final system prompt by stacking three
+/// optional segments — the active mode's persona prefix, the active
+/// mode's persona-memory block (markdown files), and the caller's
+/// upstream system prompt — in that order, separated by `---`.
+///
+/// All three inputs are independently optional. Returns `None` when
+/// every input is `None` (preserves upstream behaviour for
+/// `DefaultMode` callers that don't pass a system prompt either).
+///
+/// Keeping this as a free function makes the unit tests simple — no
+/// need to spin up a `RouterProvider` to test the assembly logic.
+fn assemble_system_prompt(
+    persona_prefix: Option<&str>,
+    persona_memory: Option<&str>,
+    caller_system_prompt: Option<&str>,
+) -> Option<String> {
+    let segments: Vec<&str> = [persona_prefix, persona_memory, caller_system_prompt]
+        .into_iter()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    if segments.is_empty() {
+        return None;
+    }
+    Some(segments.join("\n\n---\n\n"))
+}
+
 /// A single route: maps a task hint to a provider + model combo.
 #[derive(Debug, Clone)]
 pub struct Route {
@@ -102,16 +129,21 @@ impl Provider for RouterProvider {
         let (provider_idx, resolved_model) = self.resolve(model);
 
         let (provider_name, provider) = &self.providers[provider_idx];
-        // Whiskey fork: prepend the active mode's persona prefix when set.
-        // DefaultMode returns None so this is a no-op for upstream behaviour.
-        // See `crate::openhuman::modes` for the trait + registry.
+        // Whiskey fork: assemble the system prompt as
+        //   {mode persona prefix}
+        //   ---
+        //   {mode persona memory block — markdown files under
+        //    additional_memory_roots, mtime-cached and bounded}
+        //   ---
+        //   {caller's existing system prompt}
+        // DefaultMode returns None for both prefix and memory, so this
+        // is a no-op for upstream behaviour. See `modes::memory_cache`
+        // for the cache + size caps + the file-list logic.
         let mode = crate::openhuman::modes::active_mode();
-        let merged_system: Option<String> = match (mode.system_prompt_prefix(), system_prompt) {
-            (Some(prefix), Some(existing)) => Some(format!("{prefix}\n\n---\n\n{existing}")),
-            (Some(prefix), None) => Some(prefix.to_string()),
-            (None, Some(existing)) => Some(existing.to_string()),
-            (None, None) => None,
-        };
+        let prefix = mode.system_prompt_prefix();
+        let memory = crate::openhuman::modes::memory_cache::resolve(&*mode);
+        let merged_system: Option<String> =
+            assemble_system_prompt(prefix, memory.as_deref(), system_prompt);
         let merged_ref = merged_system.as_deref();
 
         tracing::info!(
@@ -193,6 +225,60 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    // ---- assemble_system_prompt: pure logic, no provider needed ---------
+
+    #[test]
+    fn assemble_returns_none_when_all_inputs_are_none() {
+        assert_eq!(assemble_system_prompt(None, None, None), None);
+    }
+
+    #[test]
+    fn assemble_returns_none_when_all_inputs_are_blank() {
+        assert_eq!(
+            assemble_system_prompt(Some("   "), Some("\n\n"), Some("")),
+            None
+        );
+    }
+
+    #[test]
+    fn assemble_passes_caller_prompt_through_unchanged_when_alone() {
+        let out = assemble_system_prompt(None, None, Some("you are helpful"))
+            .expect("non-empty caller prompt yields a Some");
+        assert_eq!(out, "you are helpful");
+    }
+
+    #[test]
+    fn assemble_stacks_persona_memory_caller_in_order() {
+        let out = assemble_system_prompt(Some("PERSONA"), Some("MEMORY"), Some("CALLER"))
+            .expect("non-empty");
+        // Order matters — persona first so the model sees identity
+        // before being asked to act, memory second so it can ground
+        // its identity in the user's curated context, caller last so
+        // any per-call instructions (e.g. JSON-mode framing) win on
+        // close-recency.
+        let persona_idx = out.find("PERSONA").expect("persona present");
+        let memory_idx = out.find("MEMORY").expect("memory present");
+        let caller_idx = out.find("CALLER").expect("caller present");
+        assert!(persona_idx < memory_idx);
+        assert!(memory_idx < caller_idx);
+        // And there's a separator between every pair.
+        assert!(out.contains("\n\n---\n\n"));
+    }
+
+    #[test]
+    fn assemble_drops_only_the_blank_segments() {
+        let out = assemble_system_prompt(Some("PERSONA"), Some("   "), Some("CALLER"))
+            .expect("non-empty");
+        assert!(out.contains("PERSONA"));
+        assert!(out.contains("CALLER"));
+        // Exactly one separator (between persona and caller) — the
+        // blank middle segment is dropped, not joined as an empty
+        // line.
+        assert_eq!(out.matches("---").count(), 1);
+    }
+
+    // ---- existing router tests ------------------------------------------
 
     struct MockProvider {
         calls: Arc<AtomicUsize>,
