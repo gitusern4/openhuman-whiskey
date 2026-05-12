@@ -7,9 +7,20 @@
  * Accepts an optional `onAttachedChange` callback so TksModsPanel can
  * track attachment state for the symbol-favorites card (which should
  * only activate TV switch when the bridge is attached).
+ *
+ * Auto-attach (cdp-auto-attach branch):
+ *   - Toggle is OFF by default to preserve existing UX.
+ *   - When ON: green dot = attached + supervisor running,
+ *              amber dot = supervisor retrying,
+ *              red dot   = supervisor disabled / stuck.
+ *   - When ON: the Attach button becomes "Force re-attach now."
+ *   - Listens to `tv-cdp-status` Tauri events from the supervisor task.
+ *     Payload: { kind: "attached"|"detached"|"reattached"|"navigated"|
+ *                       "reconnect_failed", at: number, error: string|null }
  */
 import { invoke } from '@tauri-apps/api/core';
-import { useCallback, useEffect, useState } from 'react';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface TvCdpTargetSummary {
   id: string;
@@ -59,7 +70,26 @@ interface TvLaunchResult {
   error: string | null;
 }
 
+/** Returned by tv_cdp_get_auto_attach_status */
+interface TvAutoAttachStatus {
+  enabled: boolean;
+  attached: boolean;
+  last_event: string | null;
+  last_event_at: number | null;
+  retry_count: number;
+}
+
+/** Payload of the `tv-cdp-status` Tauri event (defined in tv_cdp_supervisor.rs) */
+interface TvCdpStatusPayload {
+  kind: 'attached' | 'detached' | 'reattached' | 'navigated' | 'reconnect_failed';
+  at: number;
+  error: string | null;
+}
+
 const DEFAULT_PORT = 9222;
+
+/** Poll interval for supervisor status when auto-attach is on (ms). */
+const STATUS_POLL_MS = 5000;
 
 interface TvBridgePanelBodyProps {
   onAttachedChange?: (attached: boolean) => void;
@@ -74,6 +104,12 @@ const TvBridgePanelBody = ({ onAttachedChange }: TvBridgePanelBodyProps) => {
   const [error, setError] = useState<string | null>(null);
   const [symbolDraft, setSymbolDraft] = useState<string>('');
 
+  // Auto-attach state
+  const [autoAttach, setAutoAttach] = useState(false);
+  const [autoStatus, setAutoStatus] = useState<TvAutoAttachStatus | null>(null);
+  const unlistenRef = useRef<UnlistenFn | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const notifyAttached = useCallback(
     (next: boolean) => {
       setAttached(next);
@@ -81,6 +117,140 @@ const TvBridgePanelBody = ({ onAttachedChange }: TvBridgePanelBodyProps) => {
     },
     [onAttachedChange]
   );
+
+  // ---------------------------------------------------------------------------
+  // Auto-attach status helpers
+  // ---------------------------------------------------------------------------
+
+  const refreshAutoStatus = useCallback(async () => {
+    try {
+      const s = await invoke<TvAutoAttachStatus>('tv_cdp_get_auto_attach_status');
+      setAutoStatus(s);
+      // Sync attached state from supervisor when auto-attach is on.
+      if (s.enabled) {
+        notifyAttached(s.attached);
+      }
+    } catch {
+      // Non-fatal — supervisor may not be running.
+    }
+  }, [notifyAttached]);
+
+  // Subscribe to supervisor events and start polling when auto-attach turns on.
+  useEffect(() => {
+    if (!autoAttach) {
+      // Tear down listener and poll timer.
+      if (unlistenRef.current) {
+        unlistenRef.current();
+        unlistenRef.current = null;
+      }
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      return;
+    }
+
+    // Subscribe to real-time events from the supervisor.
+    let active = true;
+    void listen<TvCdpStatusPayload>('tv-cdp-status', ev => {
+      if (!active) return;
+      const { kind } = ev.payload;
+      if (kind === 'attached' || kind === 'reattached') {
+        notifyAttached(true);
+      } else if (kind === 'detached' || kind === 'reconnect_failed') {
+        notifyAttached(false);
+      }
+      // Always refresh the full status on any event.
+      void refreshAutoStatus();
+    }).then(fn => {
+      if (!active) {
+        fn();
+        return;
+      }
+      unlistenRef.current = fn;
+    });
+
+    // Poll status every STATUS_POLL_MS as a belt-and-braces fallback.
+    void refreshAutoStatus();
+    pollTimerRef.current = setInterval(() => {
+      void refreshAutoStatus();
+    }, STATUS_POLL_MS);
+
+    return () => {
+      active = false;
+      if (unlistenRef.current) {
+        unlistenRef.current();
+        unlistenRef.current = null;
+      }
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+  }, [autoAttach, notifyAttached, refreshAutoStatus]);
+
+  // On mount, read persisted auto-attach state.
+  useEffect(() => {
+    void invoke<TvAutoAttachStatus>('tv_cdp_get_auto_attach_status').then(s => {
+      if (s.enabled) {
+        setAutoAttach(true);
+        setPort(prev => prev); // port persisted in supervisor; may differ
+        notifyAttached(s.attached);
+      }
+      setAutoStatus(s);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Auto-attach pill appearance
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns the Tailwind color class for the supervisor status dot.
+   *   green  = supervisor on + attached
+   *   amber  = supervisor on + retrying (retry_count > 0)
+   *   red    = supervisor off or stuck (reconnect_failed as last event)
+   */
+  const supervisorDotClass = (() => {
+    if (!autoAttach || !autoStatus?.enabled) return 'bg-red-500';
+    if (autoStatus.attached) return 'bg-green-500';
+    if ((autoStatus.retry_count ?? 0) > 0) return 'bg-amber-400';
+    if (autoStatus.last_event === 'reconnect_failed') return 'bg-red-500';
+    return 'bg-amber-400';
+  })();
+
+  const supervisorLabel = (() => {
+    if (!autoAttach || !autoStatus?.enabled) return 'off';
+    if (autoStatus.attached) return 'live';
+    if ((autoStatus.retry_count ?? 0) > 0)
+      return `retry ${autoStatus.retry_count}`;
+    return 'waiting';
+  })();
+
+  // ---------------------------------------------------------------------------
+  // Toggle auto-attach
+  // ---------------------------------------------------------------------------
+
+  const toggleAutoAttach = useCallback(async () => {
+    const next = !autoAttach;
+    setPending(true);
+    setError(null);
+    try {
+      await invoke('tv_cdp_set_auto_attach', { enabled: next, port });
+      setAutoAttach(next);
+      await refreshAutoStatus();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Auto-attach toggle failed: ${msg}`);
+    } finally {
+      setPending(false);
+    }
+  }, [autoAttach, port, refreshAutoStatus]);
+
+  // ---------------------------------------------------------------------------
+  // Manual commands
+  // ---------------------------------------------------------------------------
 
   const launchTv = useCallback(async () => {
     setPending(true);
@@ -214,19 +384,57 @@ const TvBridgePanelBody = ({ onAttachedChange }: TvBridgePanelBodyProps) => {
         className="rounded-xl border border-stone-200 bg-white p-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-stone-900">Connection</h2>
-          <span
-            data-testid="tv-bridge-status"
-            className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-              attached
-                ? 'bg-green-100 text-green-800'
-                : probe?.reachable
-                  ? 'bg-amber-100 text-amber-800'
-                  : 'bg-stone-100 text-stone-600'
-            }`}>
-            {attached ? 'attached' : probe?.reachable ? 'reachable' : 'unreachable'}
+          <div className="flex items-center gap-2">
+            {/* Supervisor status pill — only shown when auto-attach is on */}
+            {autoAttach && (
+              <span
+                data-testid="tv-bridge-supervisor-pill"
+                className="flex items-center gap-1 rounded-full border border-stone-200 px-2 py-0.5 text-[10px] font-medium text-stone-600">
+                <span
+                  data-testid="tv-bridge-supervisor-dot"
+                  className={`inline-block h-1.5 w-1.5 rounded-full ${supervisorDotClass}`}
+                />
+                {supervisorLabel}
+              </span>
+            )}
+            <span
+              data-testid="tv-bridge-status"
+              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                attached
+                  ? 'bg-green-100 text-green-800'
+                  : probe?.reachable
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-stone-100 text-stone-600'
+              }`}>
+              {attached ? 'attached' : probe?.reachable ? 'reachable' : 'unreachable'}
+            </span>
+          </div>
+        </div>
+
+        {/* Auto-attach toggle row */}
+        <div className="mt-3 flex items-center gap-2">
+          <label
+            className="flex cursor-pointer items-center gap-1.5 text-xs text-stone-600"
+            htmlFor="tv-auto-attach-toggle">
+            <input
+              id="tv-auto-attach-toggle"
+              type="checkbox"
+              checked={autoAttach}
+              onChange={() => void toggleAutoAttach()}
+              disabled={pending}
+              data-testid="tv-bridge-auto-attach-toggle"
+              className="h-3.5 w-3.5 accent-primary-500 disabled:cursor-not-allowed"
+            />
+            Auto-attach
+          </label>
+          <span className="text-[10px] text-stone-400">
+            {autoAttach
+              ? 'Supervisor running — reconnects automatically on TV reload.'
+              : 'Off — set it once, always works.'}
           </span>
         </div>
-        <div className="mt-3 flex items-center gap-2">
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <label className="text-xs text-stone-600" htmlFor="tv-cdp-port">
             Port
           </label>
@@ -249,13 +457,14 @@ const TvBridgePanelBody = ({ onAttachedChange }: TvBridgePanelBodyProps) => {
             className="shrink-0 rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400">
             Probe
           </button>
+          {/* When auto-attach is on, the Attach button becomes Force re-attach */}
           <button
             type="button"
             onClick={() => void attach()}
-            disabled={pending || attached || !probe?.reachable}
+            disabled={pending || (!autoAttach && (attached || !probe?.reachable))}
             data-testid="tv-bridge-attach-button"
             className="shrink-0 rounded-md bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-300">
-            Attach
+            {autoAttach ? 'Force re-attach now' : 'Attach'}
           </button>
           <button
             type="button"
