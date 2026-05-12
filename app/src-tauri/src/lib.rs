@@ -41,6 +41,7 @@ mod slack_scanner;
 mod telegram_scanner;
 mod tradingview_cdp;
 mod tv_cdp_supervisor;
+mod tv_overlay;
 mod webview_accounts;
 mod webview_apis;
 mod whatsapp_scanner;
@@ -1615,6 +1616,9 @@ pub fn run() {
     // Order-flow state (ring buffer + cumulative delta + tags). Config
     // is loaded from tks_mods.toml on first access via OrderFlowStore::default().
     let builder = builder.manage(order_flow_commands::OrderFlowStore::default());
+    // In-TV overlay panel state — holds the injection lifecycle + the
+    // outbox-poll background task. See `tv_overlay.rs`.
+    let builder = builder.manage(tv_overlay::TvOverlayState::default());
     builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
@@ -2184,6 +2188,11 @@ pub fn run() {
             tradingview_cdp::tv_cdp_clear_sltp,
             // TK's Mods — order-flow CDP introspection.
             tradingview_cdp::tv_cdp_get_order_flow_state,
+            // TK's Mods — TV overlay panel (injected into TV's renderer via CDP).
+            tv_overlay::tv_overlay_inject,
+            tv_overlay::tv_overlay_remove,
+            tv_overlay::tv_overlay_send_state,
+            tv_overlay::tv_overlay_drain_outbox,
             // TK's Mods — position sizer + walk-away lockout.
             compute_position_size,
             lockout_status,

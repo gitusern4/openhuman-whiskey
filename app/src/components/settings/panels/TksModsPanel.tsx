@@ -25,6 +25,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useState } from 'react';
 
 import { THEMES, useTheme } from '../../../hooks/useTheme';
+import type { InjectResult, OverlayStatus } from '../../../types/overlay';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import ModesPanelBody from './ModesPanelBody';
@@ -170,6 +171,11 @@ const TksModsPanel = () => {
   const [cooldownMins, setCooldownMins] = useState('60');
   const [lockoutConfigSaved, setLockoutConfigSaved] = useState(false);
 
+  // ── TV Overlay panel ───────────────────────────────────────────────────────
+  const [overlayStatus, setOverlayStatus] = useState<OverlayStatus>('not_injected');
+  const [overlayPending, setOverlayPending] = useState(false);
+  const [overlayError, setOverlayError] = useState<string | null>(null);
+
   // ── Risk-hide toggle ───────────────────────────────────────────────────────
   const [hideRisk, setHideRiskState] = useState<boolean>(readRiskHide);
 
@@ -190,6 +196,83 @@ const TksModsPanel = () => {
   useEffect(() => {
     void refreshLockout();
   }, [refreshLockout]);
+
+  // When TV bridge detaches, reflect that in overlay status.
+  useEffect(() => {
+    if (!tvAttached) {
+      // Only downgrade to tv_not_attached if user actively lost the bridge —
+      // initial render starts as not_injected (bridge was never connected).
+      setOverlayStatus(prev => {
+        if (prev === 'injected') return 'not_injected';
+        return prev; // keep not_injected as-is; don't flip to tv_not_attached on cold start
+      });
+    }
+  }, [tvAttached]);
+
+  // ── Handlers: TV overlay ──────────────────────────────────────────────────
+
+  const handleOverlayEnable = useCallback(async () => {
+    if (!tvAttached) {
+      setOverlayStatus('tv_not_attached');
+      return;
+    }
+    setOverlayError(null);
+    setOverlayPending(true);
+    try {
+      const result = await invoke<InjectResult>('tv_overlay_inject');
+      if (result.ok) {
+        setOverlayStatus('injected');
+      } else {
+        setOverlayError(result.error ?? 'Inject failed.');
+      }
+    } catch (err) {
+      setOverlayError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOverlayPending(false);
+    }
+  }, [tvAttached]);
+
+  const handleOverlayDisable = useCallback(async () => {
+    setOverlayError(null);
+    setOverlayPending(true);
+    try {
+      await invoke('tv_overlay_remove');
+      setOverlayStatus('not_injected');
+    } catch (err) {
+      setOverlayError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOverlayPending(false);
+    }
+  }, []);
+
+  const handleOverlayTestMessage = useCallback(async () => {
+    setOverlayError(null);
+    setOverlayPending(true);
+    try {
+      await invoke('tv_overlay_send_state', {
+        newState: {
+          favorites: favorites.length > 0 ? favorites : ['NQ1!', 'ES1!'],
+          lockout: lockoutStatus ?? {
+            is_locked: false,
+            locked_until_unix: null,
+            lock_reason: null,
+            daily_loss_dollars: 0,
+            consecutive_losses: 0,
+          },
+          default_sltp: [
+            parseFloat(entry) || 0,
+            parseFloat(stop) || 0,
+            parseFloat(target) || 0,
+          ] as [number, number, number],
+          active_tag: null,
+        },
+      });
+    } catch (err) {
+      setOverlayError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOverlayPending(false);
+    }
+  }, [favorites, lockoutStatus, entry, stop, target]);
 
   // ── Handlers: SL/TP ───────────────────────────────────────────────────────
 
@@ -606,6 +689,94 @@ const TksModsPanel = () => {
           <div className="space-y-3">
             <OrderFlowCard tvAttached={tvAttached} />
           </div>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            SECTION 3c — TradingView Overlay Panel
+        ═══════════════════════════════════════════════════════════════════ */}
+        <div>
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+            TradingView Overlay
+          </h3>
+          <section
+            data-testid="tks-mods-tv-overlay-card"
+            className="rounded-xl border border-stone-200 bg-white p-4">
+            <h2 className="text-sm font-semibold text-stone-900">In-chart overlay panel</h2>
+            <p className="mt-1 text-[11px] text-stone-500">
+              Injects a floating panel directly into TradingView Desktop — symbol favorites, quick
+              SL/TP, order-flow tags, and lockout banner. Requires the TV bridge to be attached.
+            </p>
+
+            {/* Status indicator */}
+            <div className="mt-3 flex items-center gap-2">
+              <span
+                data-testid="tks-mods-overlay-status-dot"
+                className={`inline-block h-2 w-2 rounded-full ${
+                  overlayStatus === 'injected'
+                    ? 'bg-green-500'
+                    : overlayStatus === 'tv_not_attached'
+                      ? 'bg-amber-400'
+                      : 'bg-stone-300'
+                }`}
+              />
+              <span
+                data-testid="tks-mods-overlay-status-label"
+                className="text-[11px] text-stone-600">
+                {overlayStatus === 'injected'
+                  ? 'Panel injected and active'
+                  : overlayStatus === 'tv_not_attached'
+                    ? 'TV bridge not attached'
+                    : 'Not injected'}
+              </span>
+            </div>
+
+            {/* Enable / Disable toggle */}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {overlayStatus !== 'injected' ? (
+                <button
+                  type="button"
+                  onClick={() => void handleOverlayEnable()}
+                  disabled={overlayPending || !tvAttached}
+                  data-testid="tks-mods-overlay-enable"
+                  className="rounded-md bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-300">
+                  {overlayPending ? 'Working…' : 'Enable overlay'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void handleOverlayDisable()}
+                  disabled={overlayPending}
+                  data-testid="tks-mods-overlay-disable"
+                  className="rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400">
+                  {overlayPending ? 'Working…' : 'Remove overlay'}
+                </button>
+              )}
+              {overlayStatus === 'injected' ? (
+                <button
+                  type="button"
+                  onClick={() => void handleOverlayTestMessage()}
+                  disabled={overlayPending}
+                  data-testid="tks-mods-overlay-test"
+                  className="rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400">
+                  Test message
+                </button>
+              ) : null}
+            </div>
+
+            {overlayError ? (
+              <div
+                role="alert"
+                data-testid="tks-mods-overlay-error"
+                className="mt-3 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">
+                {overlayError}
+              </div>
+            ) : null}
+
+            <p className="mt-3 text-[11px] text-stone-400">
+              The panel disappears when Whiskey is closed. Position is saved to TV&apos;s
+              localStorage (per TV account).
+            </p>
+          </section>
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════════
