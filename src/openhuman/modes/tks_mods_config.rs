@@ -193,6 +193,8 @@ mod tests {
         let cfg = TksModsConfig {
             theme: "zeth".to_string(),
             hide_risk_pct: true,
+            pretrade_checklist: default_checklist(),
+            symbol_favorites: vec![],
         };
         save(&cfg);
         assert!(path.exists());
