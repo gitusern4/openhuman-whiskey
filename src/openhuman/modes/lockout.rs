@@ -124,14 +124,16 @@ pub struct LockoutStatus {
 // Path helpers
 // ---------------------------------------------------------------------------
 
-fn state_path() -> Option<PathBuf> {
+fn store() -> Option<super::persistence::AtomicTomlStore<LockoutState>> {
     if let Ok(ov) = std::env::var(TEST_OVERRIDE_ENV) {
         if !ov.is_empty() {
-            return Some(PathBuf::from(ov));
+            return Some(super::persistence::AtomicTomlStore::new(PathBuf::from(ov)));
         }
     }
     match crate::openhuman::config::default_root_openhuman_dir() {
-        Ok(root) => Some(root.join(STATE_FILE)),
+        Ok(root) => Some(super::persistence::AtomicTomlStore::new(
+            root.join(STATE_FILE),
+        )),
         Err(err) => {
             log::warn!("[lockout] no openhuman dir: {err}");
             None
@@ -151,51 +153,16 @@ fn now_unix() -> u64 {
 // ---------------------------------------------------------------------------
 
 pub fn save(state: &LockoutState) {
-    let Some(path) = state_path() else {
+    let Some(s) = store() else {
         return;
     };
-    if let Some(parent) = path.parent() {
-        if let Err(err) = std::fs::create_dir_all(parent) {
-            log::warn!(
-                "[lockout] mkdir {} failed: {err}; skip save",
-                parent.display()
-            );
-            return;
-        }
-    }
-    let raw = match toml::to_string_pretty(state) {
-        Ok(r) => r,
-        Err(err) => {
-            log::warn!("[lockout] serialize failed: {err}");
-            return;
-        }
-    };
-    if let Err(err) = std::fs::write(&path, raw) {
-        log::warn!("[lockout] write {} failed: {err}", path.display());
+    if let Err(err) = s.save(state) {
+        log::warn!("[lockout] {err}");
     }
 }
 
 pub fn load() -> LockoutState {
-    let Some(path) = state_path() else {
-        return LockoutState::default();
-    };
-    let raw = match std::fs::read_to_string(&path) {
-        Ok(r) => r,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return LockoutState::default();
-        }
-        Err(err) => {
-            log::warn!("[lockout] read {} failed: {err}", path.display());
-            return LockoutState::default();
-        }
-    };
-    match toml::from_str::<LockoutState>(&raw) {
-        Ok(s) => s,
-        Err(err) => {
-            log::warn!("[lockout] parse failed: {err}; using defaults");
-            LockoutState::default()
-        }
-    }
+    store().map(|s| s.load()).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------

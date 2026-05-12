@@ -94,14 +94,16 @@ impl Default for TksModsConfig {
     }
 }
 
-fn state_path() -> Option<PathBuf> {
+fn store() -> Option<super::persistence::AtomicTomlStore<TksModsConfig>> {
     if let Ok(ov) = std::env::var(TEST_OVERRIDE_ENV) {
         if !ov.is_empty() {
-            return Some(PathBuf::from(ov));
+            return Some(super::persistence::AtomicTomlStore::new(PathBuf::from(ov)));
         }
     }
     match crate::openhuman::config::default_root_openhuman_dir() {
-        Ok(root) => Some(root.join(STATE_FILE)),
+        Ok(root) => Some(super::persistence::AtomicTomlStore::new(
+            root.join(STATE_FILE),
+        )),
         Err(err) => {
             log::warn!("[tks_mods_config] no openhuman dir: {err}");
             None
@@ -112,27 +114,11 @@ fn state_path() -> Option<PathBuf> {
 /// Persist the config. Best-effort: any failure is warn-logged and
 /// swallowed. Never panics.
 pub fn save(cfg: &TksModsConfig) {
-    let Some(path) = state_path() else {
+    let Some(s) = store() else {
         return;
     };
-    if let Some(parent) = path.parent() {
-        if let Err(err) = std::fs::create_dir_all(parent) {
-            log::warn!(
-                "[tks_mods_config] mkdir {} failed: {err}; skip save",
-                parent.display()
-            );
-            return;
-        }
-    }
-    let raw = match toml::to_string_pretty(cfg) {
-        Ok(r) => r,
-        Err(err) => {
-            log::warn!("[tks_mods_config] serialize failed: {err}");
-            return;
-        }
-    };
-    if let Err(err) = std::fs::write(&path, raw) {
-        log::warn!("[tks_mods_config] write {} failed: {err}", path.display());
+    if let Err(err) = s.save(cfg) {
+        log::warn!("[tks_mods_config] {err}");
     } else {
         log::info!("[tks_mods_config] saved theme={}", cfg.theme);
     }
@@ -141,26 +127,7 @@ pub fn save(cfg: &TksModsConfig) {
 /// Load the config. Returns `TksModsConfig::default()` on any failure
 /// (file missing, malformed TOML, path unavailable). Never panics.
 pub fn load() -> TksModsConfig {
-    let Some(path) = state_path() else {
-        return TksModsConfig::default();
-    };
-    let raw = match std::fs::read_to_string(&path) {
-        Ok(r) => r,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return TksModsConfig::default();
-        }
-        Err(err) => {
-            log::warn!("[tks_mods_config] read {} failed: {err}", path.display());
-            return TksModsConfig::default();
-        }
-    };
-    match toml::from_str::<TksModsConfig>(&raw) {
-        Ok(cfg) => cfg,
-        Err(err) => {
-            log::warn!("[tks_mods_config] parse failed: {err}; using defaults");
-            TksModsConfig::default()
-        }
-    }
+    store().map(|s| s.load()).unwrap_or_default()
 }
 
 #[cfg(test)]
