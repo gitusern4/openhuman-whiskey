@@ -18,6 +18,7 @@ import OverlayApp from './overlay/OverlayApp';
 import './polyfills';
 import { initSentry } from './services/analytics';
 import { setStoreForApiClient } from './services/apiClient';
+import { applyStoredTheme } from './hooks/useTheme';
 import { primeActiveUserId } from './store/userScopedStorage';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
 import { getActiveUserIdFromCore } from './utils/tauriCommands';
@@ -76,6 +77,11 @@ const ensureDefaultHashRoute = () => {
 
 // Initialize Sentry early (before React renders)
 initSentry();
+
+// Apply persisted theme before React mounts to prevent FOUC
+// (flash of unstyled content). Sets data-tk-theme on <html> element.
+applyStoredTheme();
+
 document.documentElement.dataset.window = currentWindowLabel;
 
 if (!isStandaloneWindow) {
