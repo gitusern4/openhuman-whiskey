@@ -56,9 +56,16 @@ pub struct ImageGenRequest {
     #[serde(default)]
     pub model: Option<String>,
 
-    /// Disk path override for saved file. Default: under the app's
-    /// generated-images dir.
-    #[serde(default)]
+    /// Disk path override for saved file. INTERNAL ONLY — NOT exposed
+    /// in the JSON-Schema for the LLM and rejected with an error if a
+    /// caller tries to set it. WHISKEY_AUDIT.md H3 caught the original
+    /// shape, where the field deserialized from arbitrary LLM JSON
+    /// args and let the model write any byte stream to any path the
+    /// process could reach (including `whiskey_playbook.md`,
+    /// `active_mode.toml`, shell init files, …). Tests use this field
+    /// via the in-crate `with_save_path` helper; agent calls always
+    /// flow through the `default_save_dir` instead.
+    #[serde(default, skip_deserializing)]
     pub save_path: Option<PathBuf>,
 }
 

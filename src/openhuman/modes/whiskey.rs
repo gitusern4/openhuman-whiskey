@@ -35,14 +35,27 @@ impl WhiskeyMode {
         // Memory access (read + write).
         "memory_recall",
         "memory_store",
+        "memory_forget",
+        // Memory tree — full family. The umbrella `memory_tree` and
+        // every specific operation. WHISKEY_AUDIT.md C2 caught the
+        // earlier list shipping only the umbrella name and silently
+        // disabling the more specific tools the trading mentor needs
+        // to drill into the user's curated A+ catalog.
         "memory_tree",
-        // Whiskey fork: free image generation.
+        "memory_tree_drill_down",
+        "memory_tree_fetch_leaves",
+        "memory_tree_query_global",
+        "memory_tree_query_source",
+        "memory_tree_query_topic",
+        "memory_tree_search_entities",
+        // Whiskey fork: free image generation for concept maps.
         "image_gen_pollinations",
-        // Web research.
+        // Web research — for fresh market context the playbook
+        // can't pre-cache.
         "web_fetch",
         "web_search_tool",
         "http_request",
-        // Plus the read-only timing primitives the agent leans on.
+        // Read-only timing primitives the agent leans on.
         "current_time",
     ];
 

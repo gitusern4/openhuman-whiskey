@@ -30,6 +30,55 @@ fn assemble_system_prompt(
     Some(segments.join("\n\n---\n\n"))
 }
 
+/// Whiskey fork: inject the active mode's persona + memory into a
+/// `ChatMessage` slice. If the slice already starts with a `system`
+/// message, its content is replaced by the assembled prompt (the old
+/// content is folded into the assembly as `caller_system_prompt`).
+/// If no leading system message exists, one is prepended. When the
+/// active mode has neither a prefix nor a memory block (the
+/// DefaultMode case), the slice is returned as a `Vec` clone with no
+/// other change so the call site doesn't need a separate code path.
+///
+/// Closes WHISKEY_AUDIT.md C1: the `chat`, `chat_with_history`, and
+/// `chat_with_tools` Provider methods all need to inject the persona
+/// + memory the same way `chat_with_system` already does, otherwise
+/// the agent's tool loop (which calls `chat`) silently drops the
+/// Whiskey persona on every interactive turn.
+fn inject_active_mode_into_messages(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+    let mode = crate::openhuman::modes::active_mode();
+    let prefix = mode.system_prompt_prefix();
+    let memory = crate::openhuman::modes::memory_cache::resolve(&*mode);
+
+    // No-op fast path: DefaultMode and any other mode that supplies
+    // neither a prefix nor memory just clones the slice.
+    if prefix.is_none() && memory.is_none() {
+        return messages.to_vec();
+    }
+
+    // Locate (and consume) any leading `system` message so its content
+    // becomes the `caller_system_prompt` segment of the assembly.
+    let (caller_system, rest_start) = match messages.first() {
+        Some(first) if first.role == "system" => (Some(first.content.clone()), 1),
+        _ => (None, 0),
+    };
+
+    let assembled =
+        match assemble_system_prompt(prefix, memory.as_deref(), caller_system.as_deref()) {
+            Some(s) => s,
+            None => return messages.to_vec(),
+        };
+
+    let mut out: Vec<ChatMessage> = Vec::with_capacity(messages.len() + 1);
+    out.push(ChatMessage {
+        id: None,
+        role: "system".into(),
+        content: assembled,
+        extra_metadata: None,
+    });
+    out.extend(messages[rest_start..].iter().cloned());
+    out
+}
+
 /// A single route: maps a task hint to a provider + model combo.
 #[derive(Debug, Clone)]
 pub struct Route {
@@ -166,8 +215,12 @@ impl Provider for RouterProvider {
     ) -> anyhow::Result<String> {
         let (provider_idx, resolved_model) = self.resolve(model);
         let (_, provider) = &self.providers[provider_idx];
+        // WHISKEY_AUDIT.md C1: inject persona + memory into the
+        // message slice so non-`chat_with_system` paths see Whiskey
+        // context too. DefaultMode is a no-op clone.
+        let injected = inject_active_mode_into_messages(messages);
         provider
-            .chat_with_history(messages, &resolved_model, temperature)
+            .chat_with_history(&injected, &resolved_model, temperature)
             .await
     }
 
@@ -179,7 +232,19 @@ impl Provider for RouterProvider {
     ) -> anyhow::Result<ChatResponse> {
         let (provider_idx, resolved_model) = self.resolve(model);
         let (_, provider) = &self.providers[provider_idx];
-        provider.chat(request, &resolved_model, temperature).await
+        // WHISKEY_AUDIT.md C1: this is the path the agent's tool loop
+        // takes (`tool_loop::run_tool_call_loop` → `provider.chat`).
+        // Without injection here the Whiskey persona + memory are
+        // never seen by the LLM during normal interactive turns.
+        let injected = inject_active_mode_into_messages(request.messages);
+        let injected_request = ChatRequest {
+            messages: &injected,
+            tools: request.tools,
+            stream: request.stream,
+        };
+        provider
+            .chat(injected_request, &resolved_model, temperature)
+            .await
     }
 
     async fn chat_with_tools(
@@ -191,8 +256,10 @@ impl Provider for RouterProvider {
     ) -> anyhow::Result<ChatResponse> {
         let (provider_idx, resolved_model) = self.resolve(model);
         let (_, provider) = &self.providers[provider_idx];
+        // WHISKEY_AUDIT.md C1: same reason as chat() above.
+        let injected = inject_active_mode_into_messages(messages);
         provider
-            .chat_with_tools(messages, tools, &resolved_model, temperature)
+            .chat_with_tools(&injected, tools, &resolved_model, temperature)
             .await
     }
 
@@ -276,6 +343,95 @@ mod tests {
         // blank middle segment is dropped, not joined as an empty
         // line.
         assert_eq!(out.matches("---").count(), 1);
+    }
+
+    // ---- inject_active_mode_into_messages: WHISKEY_AUDIT.md C1 ----------
+    //
+    // The audit caught that `chat`, `chat_with_history`, and
+    // `chat_with_tools` skip persona injection — the agent's tool loop
+    // calls `chat()` so Whiskey was silently invisible on real
+    // interactive turns. These tests pin the new injector's behaviour:
+    // DefaultMode is a no-op, WhiskeyMode prepends or replaces a system
+    // message in the slice. They serialize via the in-file Mutex used
+    // elsewhere in the project's mode-touching tests.
+
+    use std::sync::Mutex as InjectMutex;
+    static INJECT_TEST_LOCK: InjectMutex<()> = InjectMutex::new(());
+
+    fn user_msg(content: &str) -> ChatMessage {
+        ChatMessage {
+            id: None,
+            role: "user".into(),
+            content: content.into(),
+            extra_metadata: None,
+        }
+    }
+    fn system_msg(content: &str) -> ChatMessage {
+        ChatMessage {
+            id: None,
+            role: "system".into(),
+            content: content.into(),
+            extra_metadata: None,
+        }
+    }
+
+    fn reset_to_default_mode() {
+        let _ = crate::openhuman::modes::set_active_mode(crate::openhuman::modes::DefaultMode::ID);
+    }
+
+    #[test]
+    fn inject_default_mode_is_a_clone_no_op() {
+        let _g = INJECT_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_to_default_mode();
+        let msgs = vec![system_msg("caller-system"), user_msg("hello")];
+        let out = inject_active_mode_into_messages(&msgs);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].role, "system");
+        assert_eq!(out[0].content, "caller-system");
+        assert_eq!(out[1].role, "user");
+        assert_eq!(out[1].content, "hello");
+    }
+
+    #[test]
+    fn inject_whiskey_mode_prepends_system_when_absent() {
+        let _g = INJECT_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _ = crate::openhuman::modes::set_active_mode(crate::openhuman::modes::WhiskeyMode::ID);
+        let msgs = vec![user_msg("first message — no system prompt")];
+        let out = inject_active_mode_into_messages(&msgs);
+        // A leading system was prepended.
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].role, "system");
+        // It contains the Whiskey persona signature substring (the
+        // word "trading mentor" appears in WHISKEY_SYSTEM_PREFIX).
+        assert!(
+            out[0].content.contains("trading mentor"),
+            "expected Whiskey persona text in injected system, got: {}",
+            out[0].content
+        );
+        // The original user message is preserved at index 1.
+        assert_eq!(out[1].content, "first message — no system prompt");
+        reset_to_default_mode();
+    }
+
+    #[test]
+    fn inject_whiskey_mode_merges_existing_system_message() {
+        let _g = INJECT_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _ = crate::openhuman::modes::set_active_mode(crate::openhuman::modes::WhiskeyMode::ID);
+        let msgs = vec![system_msg("you are a JSON-only responder"), user_msg("ok")];
+        let out = inject_active_mode_into_messages(&msgs);
+        // Still two messages — we replace the leading system, don't
+        // duplicate it.
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].role, "system");
+        // Both the persona AND the original caller system content
+        // appear in the assembled prompt (caller wins on close-
+        // recency for per-call framing like JSON mode).
+        assert!(out[0].content.contains("trading mentor"));
+        assert!(out[0].content.contains("JSON-only responder"));
+        // User message is unchanged.
+        assert_eq!(out[1].role, "user");
+        assert_eq!(out[1].content, "ok");
+        reset_to_default_mode();
     }
 
     // ---- existing router tests ------------------------------------------

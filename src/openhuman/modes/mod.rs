@@ -106,3 +106,58 @@ pub trait Mode: Send + Sync + 'static {
 
 /// Convenience boxed alias.
 pub type SharedMode = Arc<dyn Mode>;
+
+/// Test-only RAII guard that serializes ALL tests across the crate
+/// which mutate the process-wide active mode. WHISKEY_AUDIT.md C1
+/// fixes pushed `assemble_system_prompt` and the new injector into
+/// the router's hot path; the old per-file `TEST_LOCK` mutexes only
+/// serialized within a single test file, so when `tools::user_filter`
+/// flipped to WhiskeyMode and `tools::ops::ops_tests` ran in parallel
+/// the latter saw a filtered tool list and asserted-failed on
+/// `node_exec` not being present.
+///
+/// Usage:
+///   let _g = crate::openhuman::modes::ActiveModeGuard::new();
+///   set_active_mode("whiskey").unwrap();
+///   // … test body …
+///   // guard drop → restores prior mode + releases lock, even on panic.
+///
+/// Poison-tolerant: a panicking test under the guard does not leave
+/// later tests deadlocked on the lock.
+#[cfg(any(test, feature = "test-utils"))]
+pub struct ActiveModeGuard {
+    prior_id: String,
+    // Hold the lock for the lifetime of the guard. Stored as
+    // `Option` so `Drop` can take ownership cleanly.
+    _lock: Option<std::sync::MutexGuard<'static, ()>>,
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl ActiveModeGuard {
+    /// Acquire the global active-mode test lock and remember the
+    /// current mode so it can be restored on drop. Falls through on
+    /// poisoned mutex (recovers via `into_inner`) so a panicking test
+    /// upstream doesn't permanently strand subsequent tests.
+    pub fn new() -> Self {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let guard = LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let prior_id = registry::active_mode().id().to_string();
+        Self {
+            prior_id,
+            _lock: Some(guard),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl Drop for ActiveModeGuard {
+    fn drop(&mut self) {
+        // Restore the prior mode before releasing the lock so the
+        // next test sees a clean state on acquire. Best-effort —
+        // a missing prior mode (e.g. a test that registered a new
+        // mode and didn't unregister it) just falls through to
+        // whatever the registry reports.
+        let _ = registry::set_active_mode(&self.prior_id);
+        // _lock drops here, releasing the mutex.
+    }
+}

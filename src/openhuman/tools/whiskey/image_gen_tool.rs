@@ -27,8 +27,14 @@ pub const TOOL_NAME: &str = "image_gen_pollinations";
 const SUBDIR: &str = ".openhuman/generated_images";
 
 /// Tool wrapper. Holds the workspace dir so the generator knows where
-/// to write images by default. Call sites that pass an explicit
-/// `save_path` in arguments override this.
+/// to write images. The LLM does not get to pick the save path —
+/// `save_path` is `skip_deserializing` on the request struct AND
+/// not exposed in the JSON-Schema below AND blocked by
+/// `additionalProperties: false`. Defense-in-depth, per
+/// WHISKEY_AUDIT.md H3 (LLM-controlled write paths are an attack
+/// surface; combined with prompt-injection in playbook .md files
+/// they could overwrite the playbook itself, `active_mode.toml`,
+/// or shell init files).
 pub struct ImageGenPollinationsTool {
     save_dir: Arc<PathBuf>,
 }
