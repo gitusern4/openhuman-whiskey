@@ -12,6 +12,7 @@
  * vi.fn() that we configure per-test.
  */
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -47,6 +48,7 @@ vi.mock('../TvBridgePanelBody', () => ({
 // ---------------------------------------------------------------------------
 
 const mockInvoke = invoke as ReturnType<typeof vi.fn>;
+const mockListen = listen as ReturnType<typeof vi.fn>;
 
 const UNLOCKED_STATUS = {
   is_locked: false,
@@ -55,6 +57,7 @@ const UNLOCKED_STATUS = {
   daily_loss_dollars: 0,
   consecutive_losses: 0,
   config: { max_daily_loss_dollars: null, max_consecutive_losses: null, cooldown_minutes: 60 },
+  armed_for_reset_until: null,
 };
 
 function renderPanel() {
@@ -70,6 +73,8 @@ function renderPanel() {
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
+  // listen must return a Promise<unlistenFn> — default to a no-op.
+  mockListen.mockResolvedValue(() => {});
   mockInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'lockout_status') return UNLOCKED_STATUS;
     if (cmd === 'list_whiskey_modes') return [];
@@ -349,6 +354,123 @@ describe('Walk-away lockout', () => {
 
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith('lockout_trip', { reason: 'Manual walk-away' });
+    });
+  });
+
+  // ── Arm-reset UI tests ─────────────────────────────────────────────────────
+
+  it('arm-reset section is NOT shown when lockout is not engaged', async () => {
+    // UNLOCKED_STATUS: is_locked = false → arm-reset section must be absent.
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'lockout_status') return UNLOCKED_STATUS;
+      return null;
+    });
+
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByTestId('tks-mods-lockout-card')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('tks-mods-lockout-arm-reset-section')).not.toBeInTheDocument();
+  });
+
+  it('shows "Arm reset" button when locked but not yet armed', async () => {
+    const lockedNotArmed = {
+      ...UNLOCKED_STATUS,
+      is_locked: true,
+      locked_until_unix: Math.floor(Date.now() / 1000) + 3600,
+      lock_reason: 'Manual walk-away',
+      armed_for_reset_until: null,
+    };
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'lockout_status') return lockedNotArmed;
+      return null;
+    });
+
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByTestId('tks-mods-lockout-arm-reset-btn')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('tks-mods-lockout-arm-countdown')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('tks-mods-lockout-confirm-reset')).not.toBeInTheDocument();
+  });
+
+  it('shows countdown when armed but cooldown is still active', async () => {
+    const nowSecs = Math.floor(Date.now() / 1000);
+    const lockedArmedCooldown = {
+      ...UNLOCKED_STATUS,
+      is_locked: true,
+      locked_until_unix: nowSecs + 3600,
+      lock_reason: 'Manual walk-away',
+      armed_for_reset_until: nowSecs + 272, // ~4m 32s remaining
+    };
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'lockout_status') return lockedArmedCooldown;
+      return null;
+    });
+
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByTestId('tks-mods-lockout-arm-countdown')).toBeInTheDocument();
+    });
+    // Countdown text should include minutes:seconds format.
+    const countdown = screen.getByTestId('tks-mods-lockout-arm-countdown');
+    expect(countdown.textContent).toMatch(/Reset available in \d+:\d{2}/);
+    expect(screen.queryByTestId('tks-mods-lockout-arm-reset-btn')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('tks-mods-lockout-confirm-reset')).not.toBeInTheDocument();
+  });
+
+  it('shows "Confirm reset" button when armed and cooldown has expired', async () => {
+    const nowSecs = Math.floor(Date.now() / 1000);
+    const lockedArmedExpired = {
+      ...UNLOCKED_STATUS,
+      is_locked: true,
+      locked_until_unix: nowSecs + 3600,
+      lock_reason: 'Manual walk-away',
+      armed_for_reset_until: nowSecs - 10, // cooldown already expired
+    };
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'lockout_status') return lockedArmedExpired;
+      if (cmd === 'lockout_reset') return UNLOCKED_STATUS;
+      return null;
+    });
+
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByTestId('tks-mods-lockout-confirm-reset')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('tks-mods-lockout-arm-reset-btn')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('tks-mods-lockout-arm-countdown')).not.toBeInTheDocument();
+  });
+
+  it('shows friendly error when lockout_reset returns cooldown-active Err', async () => {
+    const nowSecs = Math.floor(Date.now() / 1000);
+    const lockedArmedExpired = {
+      ...UNLOCKED_STATUS,
+      is_locked: true,
+      locked_until_unix: nowSecs + 3600,
+      lock_reason: 'Manual walk-away',
+      armed_for_reset_until: nowSecs - 1,
+    };
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'lockout_status') return lockedArmedExpired;
+      if (cmd === 'lockout_reset')
+        throw new Error('Reset armed but cooldown active. 10 seconds remaining.');
+      return null;
+    });
+
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('tks-mods-lockout-confirm-reset')).toBeInTheDocument()
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('tks-mods-lockout-confirm-reset'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tks-mods-lockout-reset-error')).toHaveTextContent(
+        'Wait until cooldown ends.'
+      );
     });
   });
 });

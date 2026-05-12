@@ -9,8 +9,13 @@
  *   4. Test message button calls tv_overlay_send_state when injected.
  *   5. Enable button disabled when TV bridge not attached.
  *   6. Error message shown when inject fails.
+ *   7. Status dot turns green on tv-cdp-status 'attached'.
+ *   8. Status dot turns red on tv-cdp-status 'detached'.
+ *   9. Re-inject fires on 'reattached' when overlay was enabled.
+ *  10. Re-inject does NOT fire on 'reattached' when overlay was not enabled.
  */
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -46,6 +51,7 @@ vi.mock('../TvBridgePanelBody', () => ({
 }));
 
 const mockInvoke = invoke as ReturnType<typeof vi.fn>;
+const mockListen = listen as ReturnType<typeof vi.fn>;
 
 const UNLOCKED_STATUS = {
   is_locked: false,
@@ -54,6 +60,7 @@ const UNLOCKED_STATUS = {
   daily_loss_dollars: 0,
   consecutive_losses: 0,
   config: { max_daily_loss_dollars: null, max_consecutive_losses: null, cooldown_minutes: 60 },
+  armed_for_reset_until: null,
 };
 
 function renderPanel() {
@@ -67,6 +74,8 @@ function renderPanel() {
 
 beforeEach(() => {
   attachedState = false;
+  // Default listen mock: resolves with a no-op unlisten fn.
+  mockListen.mockResolvedValue(() => {});
   mockInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'lockout_status') return UNLOCKED_STATUS;
     if (cmd === 'list_whiskey_modes') return [];
@@ -237,5 +246,147 @@ describe('TradingView Overlay card', () => {
     await waitFor(() => {
       expect(screen.getByTestId('tks-mods-overlay-status-dot')).toHaveClass('bg-green-500');
     });
+  });
+});
+
+// ===========================================================================
+// Gap #4 — TV bridge CDP-status event → status dot
+// ===========================================================================
+
+describe('TV bridge CDP-status dot', () => {
+  it('dot turns green when tv-cdp-status fires "attached"', async () => {
+    // Capture the listener callback registered for 'tv-cdp-status'.
+    let capturedCallback: ((event: { payload: { kind: string } }) => void) | null = null;
+    mockListen.mockImplementation(
+      async (eventName: string, cb: (event: { payload: { kind: string } }) => void) => {
+        if (eventName === 'tv-cdp-status') capturedCallback = cb;
+        return () => {};
+      }
+    );
+
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('tks-mods-tv-bridge-status-dot')).toBeInTheDocument()
+    );
+
+    // Initially red (detached).
+    expect(screen.getByTestId('tks-mods-tv-bridge-status-dot')).toHaveClass('bg-red-400');
+
+    // Fire the event.
+    await act(async () => {
+      capturedCallback?.({ payload: { kind: 'attached' } });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tks-mods-tv-bridge-status-dot')).toHaveClass('bg-green-500');
+    });
+  });
+
+  it('dot stays red when tv-cdp-status fires "detached"', async () => {
+    let capturedCallback: ((event: { payload: { kind: string } }) => void) | null = null;
+    mockListen.mockImplementation(
+      async (eventName: string, cb: (event: { payload: { kind: string } }) => void) => {
+        if (eventName === 'tv-cdp-status') capturedCallback = cb;
+        return () => {};
+      }
+    );
+
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('tks-mods-tv-bridge-status-dot')).toBeInTheDocument()
+    );
+
+    await act(async () => {
+      capturedCallback?.({ payload: { kind: 'detached' } });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tks-mods-tv-bridge-status-dot')).toHaveClass('bg-red-400');
+    });
+  });
+});
+
+// ===========================================================================
+// Gap #5 — In-TV overlay re-inject on "reattached" event
+// ===========================================================================
+
+describe('Overlay re-inject on reattached', () => {
+  it('re-injects when overlay was enabled and reattached event fires', async () => {
+    let capturedCallback: ((event: { payload: { kind: string } }) => void) | null = null;
+    mockListen.mockImplementation(
+      async (eventName: string, cb: (event: { payload: { kind: string } }) => void) => {
+        if (eventName === 'tv-cdp-status') capturedCallback = cb;
+        return () => {};
+      }
+    );
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'lockout_status') return UNLOCKED_STATUS;
+      if (cmd === 'tv_overlay_inject')
+        return { ok: true, panel_id: 'whiskey-tv-overlay', skipped: false, error: null };
+      return null;
+    });
+
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId('stub-tv-bridge-body')).toBeInTheDocument());
+
+    // Attach bridge and enable overlay.
+    fireEvent.click(screen.getByTestId('stub-tv-bridge-body'));
+    await waitFor(() => expect(screen.getByTestId('tks-mods-overlay-enable')).not.toBeDisabled());
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('tks-mods-overlay-enable'));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('tks-mods-overlay-status-label')).toHaveTextContent(
+        'Panel injected and active'
+      )
+    );
+
+    const invokeCallsBefore = mockInvoke.mock.calls.filter(
+      ([c]: [string]) => c === 'tv_overlay_inject'
+    ).length;
+
+    // Fire reattached event.
+    await act(async () => {
+      capturedCallback?.({ payload: { kind: 'reattached' } });
+    });
+
+    await waitFor(() => {
+      const injectCalls = mockInvoke.mock.calls.filter(
+        ([c]: [string]) => c === 'tv_overlay_inject'
+      ).length;
+      expect(injectCalls).toBeGreaterThan(invokeCallsBefore);
+    });
+  });
+
+  it('does NOT re-inject when overlay was not enabled and reattached event fires', async () => {
+    let capturedCallback: ((event: { payload: { kind: string } }) => void) | null = null;
+    mockListen.mockImplementation(
+      async (eventName: string, cb: (event: { payload: { kind: string } }) => void) => {
+        if (eventName === 'tv-cdp-status') capturedCallback = cb;
+        return () => {};
+      }
+    );
+
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('tks-mods-tv-bridge-status-dot')).toBeInTheDocument()
+    );
+
+    const invokeCallsBefore = mockInvoke.mock.calls.filter(
+      ([c]: [string]) => c === 'tv_overlay_inject'
+    ).length;
+
+    // Fire reattached without overlay ever being enabled.
+    await act(async () => {
+      capturedCallback?.({ payload: { kind: 'reattached' } });
+    });
+
+    // Give React a tick to process.
+    await new Promise(r => setTimeout(r, 50));
+
+    const injectCalls = mockInvoke.mock.calls.filter(
+      ([c]: [string]) => c === 'tv_overlay_inject'
+    ).length;
+    expect(injectCalls).toBe(invokeCallsBefore);
   });
 });

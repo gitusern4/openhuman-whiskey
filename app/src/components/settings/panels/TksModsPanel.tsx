@@ -6,13 +6,15 @@
  *
  *   1. AI Mode             — mode picker + mascot hotkey (ModesPanelBody)
  *   2. TradingView bridge  — CDP probe/attach/state/symbol (TvBridgePanelBody)
- *   3. SL/TP overlay       — draw stop/target horizontal lines on chart
- *   4. Position size calc  — entry/stop/risk → contracts (compute_position_size)
- *   5. Pre-trade checklist — editable checklist, confirm-setup gate
- *   6. Symbol favorites    — quick-switch symbols via TV bridge
- *   7. Walk-away lockout   — daily-loss / consecutive-loss trip + cooldown timer
- *   8. Theme               — default vs ZETH
- *   9. Risk-hide toggle    — $/% redaction in Whiskey messages
+ *   3. Order Flow          — order-flow card
+ *   4. TradingView Overlay — in-TV injection panel
+ *   5. SL/TP overlay       — draw stop/target horizontal lines on chart
+ *   6. Position size calc  — entry/stop/risk → contracts (compute_position_size)
+ *   7. Pre-trade checklist — editable checklist, confirm-setup gate
+ *   8. Symbol favorites    — quick-switch symbols via TV bridge
+ *   9. Walk-away lockout   — daily-loss / consecutive-loss trip + arm-reset UI
+ *  10. Theme               — default vs ZETH
+ *  11. Risk-hide toggle    — $/% redaction in Whiskey messages
  *
  * Lockout banner renders at the TOP if currently locked.
  *
@@ -22,7 +24,8 @@
  *   - role="alert" + data-testid for error regions
  */
 import { invoke } from '@tauri-apps/api/core';
-import { useCallback, useEffect, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { THEMES, useTheme } from '../../../hooks/useTheme';
 import type { InjectResult, OverlayStatus } from '../../../types/overlay';
@@ -62,6 +65,13 @@ interface LockoutStatus {
   daily_loss_dollars: number;
   consecutive_losses: number;
   config: LockoutConfig;
+  /** Unix timestamp until which the arm-reset cooldown runs. null = not armed. */
+  armed_for_reset_until: number | null;
+}
+
+type TvCdpStatusKind = 'attached' | 'detached' | 'reattached' | 'reconnect_failed';
+interface TvCdpStatusEvent {
+  kind: TvCdpStatusKind;
 }
 
 interface ChecklistItem {
@@ -110,6 +120,12 @@ function formatLockoutUntil(unix: number | null): string {
   if (unix === null) return '';
   const d = new Date(unix * 1000);
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatCountdown(secs: number): string {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +186,16 @@ const TksModsPanel = () => {
   const [maxConsecLosses, setMaxConsecLosses] = useState('');
   const [cooldownMins, setCooldownMins] = useState('60');
   const [lockoutConfigSaved, setLockoutConfigSaved] = useState(false);
+  const [lockoutResetError, setLockoutResetError] = useState<string | null>(null);
+  // Countdown: re-derive from lockoutStatus.armed_for_reset_until on every tick.
+  const [armCountdownSecs, setArmCountdownSecs] = useState<number | null>(null);
+
+  // ── TV bridge CDP-status dot ────────────────────────────────────────────────
+  type TvBridgeDotState = 'attached' | 'reconnecting' | 'detached';
+  const [tvBridgeDotState, setTvBridgeDotState] = useState<TvBridgeDotState>('detached');
+
+  // Track whether the overlay was user-enabled so we can re-inject on reattach.
+  const overlayEnabledRef = useRef(false);
 
   // ── TV Overlay panel ───────────────────────────────────────────────────────
   const [overlayStatus, setOverlayStatus] = useState<OverlayStatus>('not_injected');
@@ -197,6 +223,63 @@ const TksModsPanel = () => {
     void refreshLockout();
   }, [refreshLockout]);
 
+  // ── Arm-reset countdown ticker ─────────────────────────────────────────────
+  // Recomputes every second while armed; clears itself when no longer armed.
+  useEffect(() => {
+    const armedUntil = lockoutStatus?.armed_for_reset_until ?? null;
+    if (armedUntil === null) {
+      setArmCountdownSecs(null);
+      return;
+    }
+    const tick = () => {
+      const remaining = armedUntil - Math.floor(Date.now() / 1000);
+      setArmCountdownSecs(remaining > 0 ? remaining : 0);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [lockoutStatus?.armed_for_reset_until]);
+
+  // ── TV CDP-status event listener ───────────────────────────────────────────
+  // Drives the status dot on the TV bridge card and triggers re-inject when
+  // the supervisor fires 'reattached'.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    const setup = async () => {
+      const unlistenFn = await listen<TvCdpStatusEvent>('tv-cdp-status', event => {
+        if (cancelled) return;
+        const kind = event.payload.kind;
+        if (kind === 'attached' || kind === 'reattached') {
+          setTvBridgeDotState('attached');
+          // Re-inject overlay if the user had it enabled and TV reloaded.
+          if (kind === 'reattached' && overlayEnabledRef.current) {
+            void invoke<{ ok: boolean; error: string | null }>('tv_overlay_inject').then(result => {
+              if (result.ok) {
+                setOverlayStatus('injected');
+              }
+            });
+          }
+        } else if (kind === 'detached' || kind === 'reconnect_failed') {
+          setTvBridgeDotState('detached');
+        }
+      });
+      if (!cancelled) {
+        unlisten = unlistenFn;
+      } else {
+        unlistenFn?.();
+      }
+    };
+
+    void setup();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
   // When TV bridge detaches, reflect that in overlay status.
   useEffect(() => {
     if (!tvAttached) {
@@ -222,6 +305,7 @@ const TksModsPanel = () => {
       const result = await invoke<InjectResult>('tv_overlay_inject');
       if (result.ok) {
         setOverlayStatus('injected');
+        overlayEnabledRef.current = true;
       } else {
         setOverlayError(result.error ?? 'Inject failed.');
       }
@@ -238,6 +322,7 @@ const TksModsPanel = () => {
     try {
       await invoke('tv_overlay_remove');
       setOverlayStatus('not_injected');
+      overlayEnabledRef.current = false;
     } catch (err) {
       setOverlayError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -466,19 +551,36 @@ const TksModsPanel = () => {
     }
   }, []);
 
-  const handleForceReset = useCallback(async () => {
-    if (!forceResetArmed) return;
+  const handleArmReset = useCallback(async () => {
     setLockoutPending(true);
+    setLockoutResetError(null);
     try {
-      const s = await invoke<LockoutStatus>('lockout_reset');
+      const s = await invoke<LockoutStatus>('lockout_arm_reset');
       setLockoutStatus(s);
-      setForceResetArmed(false);
     } catch {
       // silently ignore
     } finally {
       setLockoutPending(false);
     }
-  }, [forceResetArmed]);
+  }, []);
+
+  const handleForceReset = useCallback(async () => {
+    setLockoutPending(true);
+    setLockoutResetError(null);
+    try {
+      const s = await invoke<LockoutStatus>('lockout_reset');
+      setLockoutStatus(s);
+      setForceResetArmed(false);
+    } catch (err) {
+      // lockout_reset returns Result<LockoutStatus, String> — the Err payload
+      // is a human-readable message from request_force_reset (e.g. "Reset armed
+      // but cooldown active. 243 seconds remaining.").
+      const msg = err instanceof Error ? err.message : String(err);
+      setLockoutResetError(msg.includes('cooldown') ? 'Wait until cooldown ends.' : msg);
+    } finally {
+      setLockoutPending(false);
+    }
+  }, []);
 
   const handleSaveLockoutConfig = useCallback(async () => {
     setLockoutPending(true);
@@ -511,6 +613,10 @@ const TksModsPanel = () => {
       // ignore
     }
     setHideRiskState(next);
+    // Notify the overlay bus cache so the risk-sanitizer picks up the new
+    // value immediately — without this, publish_attention keeps using the
+    // stale cached value until the next app restart.
+    void invoke('tks_mods_invalidate_cache');
   }, []);
 
   // ── Handler: theme ─────────────────────────────────────────────────────────
@@ -567,12 +673,132 @@ const TksModsPanel = () => {
             TradingView Bridge
           </h3>
           <div className="space-y-3">
+            {/* CDP-status dot — driven by listen('tv-cdp-status') events */}
+            <div className="flex items-center gap-2">
+              <span
+                data-testid="tks-mods-tv-bridge-status-dot"
+                className={`inline-block h-2 w-2 rounded-full ${
+                  tvBridgeDotState === 'attached'
+                    ? 'bg-green-500'
+                    : tvBridgeDotState === 'reconnecting'
+                      ? 'bg-amber-400'
+                      : 'bg-red-400'
+                }`}
+              />
+              <span className="text-[11px] text-stone-500">
+                {tvBridgeDotState === 'attached'
+                  ? 'Attached'
+                  : tvBridgeDotState === 'reconnecting'
+                    ? 'Reconnecting…'
+                    : 'Detached'}
+              </span>
+            </div>
             <TvBridgePanelBody onAttachedChange={setTvAttached} />
           </div>
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════════
-            SECTION 3 — SL/TP Overlay
+            SECTION 3 — Order Flow
+        ═══════════════════════════════════════════════════════════════════ */}
+        <div>
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+            Order Flow
+          </h3>
+          <div className="space-y-3">
+            <OrderFlowCard tvAttached={tvAttached} />
+          </div>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            SECTION 4 — TradingView Overlay Panel (in-TV injection)
+        ═══════════════════════════════════════════════════════════════════ */}
+        <div>
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+            TradingView Overlay
+          </h3>
+          <section
+            data-testid="tks-mods-tv-overlay-card"
+            className="rounded-xl border border-stone-200 bg-white p-4">
+            <h2 className="text-sm font-semibold text-stone-900">In-chart overlay panel</h2>
+            <p className="mt-1 text-[11px] text-stone-500">
+              Injects a floating panel directly into TradingView Desktop — symbol favorites, quick
+              SL/TP, order-flow tags, and lockout banner. Requires the TV bridge to be attached.
+            </p>
+
+            {/* Status indicator */}
+            <div className="mt-3 flex items-center gap-2">
+              <span
+                data-testid="tks-mods-overlay-status-dot"
+                className={`inline-block h-2 w-2 rounded-full ${
+                  overlayStatus === 'injected'
+                    ? 'bg-green-500'
+                    : overlayStatus === 'tv_not_attached'
+                      ? 'bg-amber-400'
+                      : 'bg-stone-300'
+                }`}
+              />
+              <span
+                data-testid="tks-mods-overlay-status-label"
+                className="text-[11px] text-stone-600">
+                {overlayStatus === 'injected'
+                  ? 'Panel injected and active'
+                  : overlayStatus === 'tv_not_attached'
+                    ? 'TV bridge not attached'
+                    : 'Not injected'}
+              </span>
+            </div>
+
+            {/* Enable / Disable toggle */}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {overlayStatus !== 'injected' ? (
+                <button
+                  type="button"
+                  onClick={() => void handleOverlayEnable()}
+                  disabled={overlayPending || !tvAttached}
+                  data-testid="tks-mods-overlay-enable"
+                  className="rounded-md bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-300">
+                  {overlayPending ? 'Working…' : 'Enable overlay'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void handleOverlayDisable()}
+                  disabled={overlayPending}
+                  data-testid="tks-mods-overlay-disable"
+                  className="rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400">
+                  {overlayPending ? 'Working…' : 'Remove overlay'}
+                </button>
+              )}
+              {overlayStatus === 'injected' ? (
+                <button
+                  type="button"
+                  onClick={() => void handleOverlayTestMessage()}
+                  disabled={overlayPending}
+                  data-testid="tks-mods-overlay-test"
+                  className="rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400">
+                  Test message
+                </button>
+              ) : null}
+            </div>
+
+            {overlayError ? (
+              <div
+                role="alert"
+                data-testid="tks-mods-overlay-error"
+                className="mt-3 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">
+                {overlayError}
+              </div>
+            ) : null}
+
+            <p className="mt-3 text-[11px] text-stone-400">
+              The panel disappears when Whiskey is closed. Position is saved to TV&apos;s
+              localStorage (per TV account).
+            </p>
+          </section>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            SECTION 5 — SL/TP Overlay
         ═══════════════════════════════════════════════════════════════════ */}
         <div>
           <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
@@ -680,107 +906,7 @@ const TksModsPanel = () => {
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════════
-            SECTION 3b — Order Flow
-        ═══════════════════════════════════════════════════════════════════ */}
-        <div>
-          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
-            Order Flow
-          </h3>
-          <div className="space-y-3">
-            <OrderFlowCard tvAttached={tvAttached} />
-          </div>
-        </div>
-
-        {/* ═══════════════════════════════════════════════════════════════════
-            SECTION 3c — TradingView Overlay Panel
-        ═══════════════════════════════════════════════════════════════════ */}
-        <div>
-          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
-            TradingView Overlay
-          </h3>
-          <section
-            data-testid="tks-mods-tv-overlay-card"
-            className="rounded-xl border border-stone-200 bg-white p-4">
-            <h2 className="text-sm font-semibold text-stone-900">In-chart overlay panel</h2>
-            <p className="mt-1 text-[11px] text-stone-500">
-              Injects a floating panel directly into TradingView Desktop — symbol favorites, quick
-              SL/TP, order-flow tags, and lockout banner. Requires the TV bridge to be attached.
-            </p>
-
-            {/* Status indicator */}
-            <div className="mt-3 flex items-center gap-2">
-              <span
-                data-testid="tks-mods-overlay-status-dot"
-                className={`inline-block h-2 w-2 rounded-full ${
-                  overlayStatus === 'injected'
-                    ? 'bg-green-500'
-                    : overlayStatus === 'tv_not_attached'
-                      ? 'bg-amber-400'
-                      : 'bg-stone-300'
-                }`}
-              />
-              <span
-                data-testid="tks-mods-overlay-status-label"
-                className="text-[11px] text-stone-600">
-                {overlayStatus === 'injected'
-                  ? 'Panel injected and active'
-                  : overlayStatus === 'tv_not_attached'
-                    ? 'TV bridge not attached'
-                    : 'Not injected'}
-              </span>
-            </div>
-
-            {/* Enable / Disable toggle */}
-            <div className="mt-3 flex flex-wrap gap-2">
-              {overlayStatus !== 'injected' ? (
-                <button
-                  type="button"
-                  onClick={() => void handleOverlayEnable()}
-                  disabled={overlayPending || !tvAttached}
-                  data-testid="tks-mods-overlay-enable"
-                  className="rounded-md bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-300">
-                  {overlayPending ? 'Working…' : 'Enable overlay'}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => void handleOverlayDisable()}
-                  disabled={overlayPending}
-                  data-testid="tks-mods-overlay-disable"
-                  className="rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400">
-                  {overlayPending ? 'Working…' : 'Remove overlay'}
-                </button>
-              )}
-              {overlayStatus === 'injected' ? (
-                <button
-                  type="button"
-                  onClick={() => void handleOverlayTestMessage()}
-                  disabled={overlayPending}
-                  data-testid="tks-mods-overlay-test"
-                  className="rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400">
-                  Test message
-                </button>
-              ) : null}
-            </div>
-
-            {overlayError ? (
-              <div
-                role="alert"
-                data-testid="tks-mods-overlay-error"
-                className="mt-3 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">
-                {overlayError}
-              </div>
-            ) : null}
-
-            <p className="mt-3 text-[11px] text-stone-400">
-              The panel disappears when Whiskey is closed. Position is saved to TV&apos;s
-              localStorage (per TV account).
-            </p>
-          </section>
-        </div>
-
-        {/* ═══════════════════════════════════════════════════════════════════
-            SECTION 4 — Position Size Calculator
+            SECTION 6 — Position Size Calculator
         ═══════════════════════════════════════════════════════════════════ */}
         <div>
           <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
@@ -900,7 +1026,7 @@ const TksModsPanel = () => {
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════════
-            SECTION 5 — Pre-trade Checklist
+            SECTION 7 — Pre-trade Checklist
         ═══════════════════════════════════════════════════════════════════ */}
         <div>
           <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
@@ -1003,7 +1129,7 @@ const TksModsPanel = () => {
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════════
-            SECTION 6 — Symbol Favorites
+            SECTION 8 — Symbol Favorites
         ═══════════════════════════════════════════════════════════════════ */}
         <div>
           <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
@@ -1088,7 +1214,7 @@ const TksModsPanel = () => {
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════════
-            SECTION 7 — Walk-away Lockout
+            SECTION 9 — Walk-away Lockout
         ═══════════════════════════════════════════════════════════════════ */}
         <div>
           <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
@@ -1203,36 +1329,64 @@ const TksModsPanel = () => {
                   className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50">
                   Trip lockout now
                 </button>
+              </div>
 
-                {isLocked ? (
-                  <>
-                    <label className="flex items-center gap-2 text-xs text-stone-600">
-                      <input
-                        type="checkbox"
-                        checked={forceResetArmed}
-                        onChange={e => setForceResetArmed(e.target.checked)}
-                        data-testid="tks-mods-lockout-arm-reset"
-                        className="h-4 w-4 rounded border-stone-300 text-primary-500"
-                      />
-                      Arm force reset
-                    </label>
+              {/* Arm-reset UI — only shown when locked */}
+              {isLocked ? (
+                <div
+                  data-testid="tks-mods-lockout-arm-reset-section"
+                  className="mt-3 rounded-md border border-stone-100 bg-stone-50 p-3">
+                  <p className="text-[11px] text-stone-500">
+                    Override requires a 5-minute cooldown after arming — prevents impulsive bypass
+                    while in drawdown.
+                  </p>
+
+                  {/* Phase 1: not yet armed — show "Arm reset" button */}
+                  {lockoutStatus?.armed_for_reset_until === null ||
+                  lockoutStatus?.armed_for_reset_until === undefined ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleArmReset()}
+                      disabled={lockoutPending}
+                      data-testid="tks-mods-lockout-arm-reset-btn"
+                      className="mt-2 rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50">
+                      Arm reset (5 min cooldown)
+                    </button>
+                  ) : armCountdownSecs !== null && armCountdownSecs > 0 ? (
+                    /* Phase 2: armed but cooldown still running — show countdown */
+                    <p
+                      data-testid="tks-mods-lockout-arm-countdown"
+                      className="mt-2 text-[11px] font-mono text-amber-700">
+                      Reset available in {formatCountdown(armCountdownSecs)}
+                    </p>
+                  ) : (
+                    /* Phase 3: armed AND cooldown expired — show Confirm button */
                     <button
                       type="button"
                       onClick={() => void handleForceReset()}
-                      disabled={lockoutPending || !forceResetArmed}
-                      data-testid="tks-mods-lockout-force-reset"
-                      className="rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50">
-                      Force reset
+                      disabled={lockoutPending}
+                      data-testid="tks-mods-lockout-confirm-reset"
+                      className="mt-2 rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50">
+                      {lockoutPending ? 'Resetting…' : 'Confirm reset'}
                     </button>
-                  </>
-                ) : null}
-              </div>
+                  )}
+
+                  {lockoutResetError ? (
+                    <p
+                      role="alert"
+                      data-testid="tks-mods-lockout-reset-error"
+                      className="mt-2 text-[11px] text-red-700">
+                      {lockoutResetError}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </section>
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════════
-            SECTION 8 — Theme
+            SECTION 10 — Theme
         ═══════════════════════════════════════════════════════════════════ */}
         <div>
           <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
@@ -1275,7 +1429,7 @@ const TksModsPanel = () => {
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════════
-            SECTION 9 — Risk-hide toggle
+            SECTION 11 — Risk-hide toggle
         ═══════════════════════════════════════════════════════════════════ */}
         <div>
           <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
