@@ -161,6 +161,14 @@ pub fn all_tools_with_runtime(
                 workspace_dir.to_path_buf(),
             ),
         ),
+        // Whiskey fork: TradingView Desktop CDP bridge tools.
+        // Read and write the active chart state via the Tauri CDP bridge.
+        // Both tools are stubbed until the core→Tauri webview_apis bridge
+        // is wired for tradingview.* methods — see tv_chart.rs for the
+        // wiring plan. Schema, registration, and allowlist are complete
+        // so the merge story is clean.
+        Box::new(crate::openhuman::tools::whiskey::TvChartStateTool),
+        Box::new(crate::openhuman::tools::whiskey::TvSetSymbolTool),
     ];
 
     if browser_config.enabled {

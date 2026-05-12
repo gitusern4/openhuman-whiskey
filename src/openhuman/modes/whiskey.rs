@@ -57,6 +57,11 @@ impl WhiskeyMode {
         "http_request",
         // Read-only timing primitives the agent leans on.
         "current_time",
+        // Whiskey fork: TradingView Desktop CDP bridge tools.
+        // Read the active chart state (symbol, timeframe, indicators,
+        // shapes, alert count) and switch the chart symbol.
+        "tv_chart_get_state",
+        "tv_chart_set_symbol",
     ];
 
     /// Construct with the default memory root resolved from the
