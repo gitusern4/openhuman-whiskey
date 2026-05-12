@@ -19,7 +19,9 @@ import type { ProposalShape } from '../src/components/settings/panels/ConfirmTra
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
 
-vi.useFakeTimers();
+// Fake timers + waitFor in the same suite leads to 30s timeouts because
+// vitest's waitFor polls via setTimeout and fake timers don't advance.
+// The countdown tests below use real timers + small explicit waits.
 
 function makeProposal(overrides?: Partial<ProposalShape>): ProposalShape {
   return {
@@ -70,40 +72,49 @@ describe('ConfirmTradeDialog', () => {
   });
 
   it('confirm button enabled after countdown completes', async () => {
-    render(
-      <ConfirmTradeDialog
-        proposal={makeProposal()}
-        consecutiveLosses={0}
-        onConfirmed={vi.fn()}
-        onCancelled={vi.fn()}
-      />
-    );
-    expect(screen.getByTestId('confirm-submit-button')).toBeDisabled();
-    act(() => vi.advanceTimersByTime(3500));
-    await waitFor(() => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <ConfirmTradeDialog
+          proposal={makeProposal()}
+          consecutiveLosses={0}
+          onConfirmed={vi.fn()}
+          onCancelled={vi.fn()}
+        />
+      );
+      expect(screen.getByTestId('confirm-submit-button')).toBeDisabled();
+      act(() => vi.advanceTimersByTime(3500));
       expect(screen.getByTestId('confirm-submit-button')).not.toBeDisabled();
-    });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('loss-streak escalation adds 1s per consecutive loss', () => {
-    render(
-      <ConfirmTradeDialog
-        proposal={makeProposal({ countdown_seconds: 3 })}
-        consecutiveLosses={2}
-        onConfirmed={vi.fn()}
-        onCancelled={vi.fn()}
-      />
-    );
-    // Total countdown = 3 + 2 = 5 seconds
-    expect(screen.getByTestId('confirm-countdown').textContent).toBe('5');
-    act(() => vi.advanceTimersByTime(3500));
-    // Still disabled (4 seconds remain → now showing 2)
-    expect(screen.getByTestId('confirm-submit-button')).toBeDisabled();
-    act(() => vi.advanceTimersByTime(2000));
-    expect(screen.getByTestId('confirm-submit-button')).not.toBeDisabled();
+    vi.useFakeTimers();
+    try {
+      render(
+        <ConfirmTradeDialog
+          proposal={makeProposal({ countdown_seconds: 3 })}
+          consecutiveLosses={2}
+          onConfirmed={vi.fn()}
+          onCancelled={vi.fn()}
+        />
+      );
+      // Total countdown = 3 + 2 = 5 seconds
+      expect(screen.getByTestId('confirm-countdown').textContent).toBe('5');
+      act(() => vi.advanceTimersByTime(3500));
+      // Still disabled (4 seconds remain → now showing 2)
+      expect(screen.getByTestId('confirm-submit-button')).toBeDisabled();
+      act(() => vi.advanceTimersByTime(2000));
+      expect(screen.getByTestId('confirm-submit-button')).not.toBeDisabled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('confirm path calls confirm_bracket_order and invokes onConfirmed', async () => {
+    vi.useFakeTimers();
     const onConfirmed = vi.fn();
     render(
       <ConfirmTradeDialog
@@ -114,7 +125,10 @@ describe('ConfirmTradeDialog', () => {
       />
     );
     act(() => vi.advanceTimersByTime(4000));
-    await waitFor(() => expect(screen.getByTestId('confirm-submit-button')).not.toBeDisabled());
+    expect(screen.getByTestId('confirm-submit-button')).not.toBeDisabled();
+    // Switch to real timers BEFORE the async invoke + waitFor block —
+    // the broker call goes through Promise microtasks not setTimeout.
+    vi.useRealTimers();
     await act(async () => {
       fireEvent.click(screen.getByTestId('confirm-submit-button'));
     });

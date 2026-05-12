@@ -18,7 +18,12 @@ import LossCounter from '../src/components/settings/panels/LossCounter';
 import type { SessionState } from '../src/components/settings/panels/types';
 import WalkAwayLockout from '../src/components/settings/panels/WalkAwayLockout';
 
-vi.useFakeTimers();
+// NOTE: don't enable fake timers globally — vitest's waitFor polls
+// via setTimeout internally; with fake timers + waitFor in the same
+// test the polling never advances and we time out at 30s. The two
+// WalkAwayLockout tests below need real timers because they assert
+// against rendered output that requires the component's setInterval
+// callback to fire at least once.
 
 function makeSession(overrides?: Partial<SessionState>): SessionState {
   return {

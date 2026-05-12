@@ -18,7 +18,9 @@ import type { ProposalShape } from '../src/components/settings/panels/types';
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
 
-vi.useFakeTimers();
+// Fake timers + waitFor cause 30s timeouts (waitFor's internal poll
+// runs via setTimeout, doesn't advance under vi.useFakeTimers()).
+// All tests in this file use waitFor, so use real timers.
 
 const sampleProposal: ProposalShape = {
   proposal_hash: 'b'.repeat(64),

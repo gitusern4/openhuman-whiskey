@@ -218,6 +218,10 @@ describe('OnboardingWizard', () => {
   });
 
   // 7. TvBridgeStep probe calls tv_cdp_probe; attach calls tv_cdp_attach.
+  // Assertion uses objectContaining because the real call shape is
+  // ('tv_cdp_probe', { port: 9222 }) — toHaveBeenCalledWith does an
+  // exact arg-tuple match, so we check the call list explicitly for
+  // the command name.
   it('calls tv_cdp_probe and tv_cdp_attach in order', async () => {
     setupInvoke({ completed: false, currentStep: 1, probeReachable: true });
     renderWizard();
@@ -225,11 +229,17 @@ describe('OnboardingWizard', () => {
     await waitFor(() => screen.getByText('TradingView Bridge'));
 
     fireEvent.click(screen.getByRole('button', { name: /probe/i }));
-    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('tv_cdp_probe'));
+    await waitFor(() => {
+      const cmds = mockInvoke.mock.calls.map((c: unknown[]) => c[0]);
+      expect(cmds).toContain('tv_cdp_probe');
+    });
 
     await waitFor(() => screen.getByRole('button', { name: /attach/i }));
     fireEvent.click(screen.getByRole('button', { name: /attach/i }));
-    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('tv_cdp_attach'));
+    await waitFor(() => {
+      const cmds = mockInvoke.mock.calls.map((c: unknown[]) => c[0]);
+      expect(cmds).toContain('tv_cdp_attach');
+    });
   });
 
   // 8. DoneStep summary reflects choices (Whiskey mode + TV skipped).
