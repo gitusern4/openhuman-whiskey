@@ -541,22 +541,28 @@ pub async fn tv_cdp_get_chart_state(
         Value::String(s) => serde_json::from_str(s).unwrap_or(Value::Null),
         other => other.clone(),
     };
-    let indicators = parsed.get("indicators").and_then(|v| v.as_array()).map(|arr| {
-        arr.iter()
-            .map(|i| TvIndicatorSummary {
-                id: i.get("id").and_then(|x| x.as_str()).map(str::to_string),
-                name: i.get("name").and_then(|x| x.as_str()).map(str::to_string),
-            })
-            .collect::<Vec<_>>()
-    });
-    let shapes = parsed.get("shapes").and_then(|v| v.as_array()).map(|arr| {
-        arr.iter()
-            .map(|i| TvShapeSummary {
-                id: i.get("id").and_then(|x| x.as_str()).map(str::to_string),
-                name: i.get("name").and_then(|x| x.as_str()).map(str::to_string),
-            })
-            .collect::<Vec<_>>()
-    });
+    let indicators = parsed
+        .get("indicators")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|i| TvIndicatorSummary {
+                    id: i.get("id").and_then(|x| x.as_str()).map(str::to_string),
+                    name: i.get("name").and_then(|x| x.as_str()).map(str::to_string),
+                })
+                .collect::<Vec<_>>()
+        });
+    let shapes = parsed
+        .get("shapes")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|i| TvShapeSummary {
+                    id: i.get("id").and_then(|x| x.as_str()).map(str::to_string),
+                    name: i.get("name").and_then(|x| x.as_str()).map(str::to_string),
+                })
+                .collect::<Vec<_>>()
+        });
     Ok(TvChartState {
         symbol: parsed
             .get("symbol")
