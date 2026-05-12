@@ -568,4 +568,72 @@ body::before {
   --color-text-secondary: #525252;
   --color-text-tertiary: #737373;
   --color-text-muted: #a3a3a3;
+
+  /* TK's Mods — theme custom properties (default values) */
+  --tk-bg: #f5f5f5;
+  --tk-surface: #ffffff;
+  --tk-surface-alt: #fafafa;
+  --tk-border: #e5e5e5;
+  --tk-text: #171717;
+  --tk-text-muted: #737373;
+  --tk-accent: #5b9bf3; /* primary-500 */
+  --tk-accent-hover: #3b82f6; /* primary-600 */
+  --tk-accent-text: #ffffff;
+  --tk-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+/* ============================================
+   ZETH Theme — cyber-gothic / deep black / neon green
+   Activated by adding data-tk-theme="zeth" to <html> or <body>.
+   All custom properties are CSS-only so the switch is a pure paint
+   pass — no React re-render is required.
+   ============================================ */
+[data-tk-theme='zeth'] {
+  --tk-bg: #050505;
+  --tk-surface: #0d0d0d;
+  --tk-surface-alt: #111111;
+  --tk-border: #1f2f1f; /* subtle green-tinted dark border */
+  --tk-text: #e8ffe8; /* near-white with green cast */
+  --tk-text-muted: #52734d; /* muted forest green */
+  --tk-accent: #39ff14; /* neon green — the ZETH signature */
+  --tk-accent-hover: #2ae610;
+  --tk-accent-text: #050505; /* dark text on neon bg for contrast */
+  --tk-card-shadow: 0 0 0 1px #1a2e1a, 0 2px 12px rgba(57, 255, 20, 0.06);
+
+  /* Override semantic tokens so existing components pick up ZETH tones */
+  --color-background: #050505;
+  --color-surface: #0d0d0d;
+  --color-surface-elevated: #111111;
+  --color-border: #1f2f1f;
+  --color-border-subtle: #131f13;
+  --color-text-primary: #e8ffe8;
+  --color-text-secondary: #7ab870;
+  --color-text-tertiary: #52734d;
+  --color-text-muted: #354d30;
+}
+
+/* ZETH — apply bg/text to the surfaces that use semantic vars */
+[data-tk-theme='zeth'] body,
+[data-tk-theme='zeth'] #root {
+  background: var(--tk-bg);
+  color: var(--tk-text);
+}
+
+/* ZETH — neon green glow on focus rings */
+[data-tk-theme='zeth'] *:focus-visible {
+  outline-color: var(--tk-accent);
+}
+
+/* ZETH — card borders pick up neon tint */
+[data-tk-theme='zeth'] .rounded-xl,
+[data-tk-theme='zeth'] .rounded-2xl {
+  border-color: var(--tk-border);
+}
+
+/* ZETH — bump font tracking slightly for the cyber feel */
+[data-tk-theme='zeth'] h1,
+[data-tk-theme='zeth'] h2,
+[data-tk-theme='zeth'] h3 {
+  letter-spacing: 0.04em;
+  font-weight: 600;
 }
