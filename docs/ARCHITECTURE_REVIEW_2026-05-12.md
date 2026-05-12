@@ -608,3 +608,62 @@ A subtle variant of this risk: even after wiring lands, the proposal store needs
 - Trunk (`whiskey` at `fa0e652e`): **conditional sign-off.** PR-#5 / #7 / #6 / #8 / #4 closed cleanly. Three Phase 1 items remain open (publish_attention cache, AtomicTomlStore, lockout server-gate) — defer to v2 acceptable.
 - PR #9 (overlay panel): **not signed off.** Nonce required.
 - PR #10 (execution-v1): **not signed off.** Library mergeable; commands must be wired through the library before merge.
+
+---
+
+# Phase 3 sign-off — trunk-as-of-`61429b8d`
+
+_Appended 2026-05-12 by senior architect after the May 12 merge batch closed._
+_Trunk audited: `whiskey` at `61429b8d`. Execution branch unchanged: `execution-v1` at `ca8c2f7a`._
+
+## Phase 1 architect-required fixes — status against trunk
+
+Every blocker identified in the Phase 1 pass has shipped:
+
+| # | Fix | Commit | Evidence |
+|---|---|---|---|
+| 1 | `tv_cdp_eval` IPC gate (calling-webview label check) | `aed51f20` | `app/src-tauri/src/tradingview_cdp.rs:519` — rejects when `webview.label() != "main"`. Internal callers route through `tv_cdp_eval_internal` (no gate, hardcoded JS only). |
+| 2 | PR #6 ↔ PR #7 contract reconciliation | `fa0e652e` | `app/src/types/orderFlow.ts` mirrors the Rust struct. `app/src/hooks/useOrderFlow.ts` invokes `order_flow_set_config` (not `_save_config`). Preset IDs `vwap_profile_anchored / standard_orderflow / delta_focused` are now canonical end-to-end. |
+| 3 | `tv_cdp_eval_internal` extraction | `fa0e652e` | `app/src-tauri/src/tradingview_cdp.rs:539` — the 5 internal callers (`tv_cdp_get_chart_state / tv_cdp_set_symbol / tv_cdp_draw_sltp / tv_cdp_clear_sltp / tv_cdp_get_order_flow_state`) no longer trip the public-command webview gate. |
+| 4 | Outbox nonce (PR #9 forgery defense) | `6cc56c91` | `app/src-tauri/src/tv_overlay.rs` generates a 32-char hex nonce per injection session; substituted into the JS bundle at `__WHISKEY_NONCE__`; lives in IIFE closure scope only (never on `window`); Rust drops every outbox entry whose `__nonce` doesn't match. 8 unit tests on the pure `filter_by_nonce` helper. |
+| 5 | Lockout server-gate (5-minute arm-then-reset) | `2b69ab6f` | `src/openhuman/modes/lockout.rs` adds `armed_for_reset_until: i64`. `arm_force_reset` writes `now() + 300s`; `request_force_reset` rejects with seconds-remaining `Err` until the timer elapses. Tauri surface adds `lockout_arm_reset`; `lockout_reset` is now `Result<LockoutStatus, String>`. |
+| 6 | `publish_attention` hot-path cache | `61429b8d` | `src/openhuman/overlay/bus.rs` replaces the per-event `tks_mods_config::load()` disk read with an `AtomicU8` tri-state (Unset/On/Off). Hot path is a single relaxed atomic load; `invalidate_tks_cache()` resets to Unset. |
+| 7 | DoneStep route fix | `7abb0573` | `app/src/components/onboarding/steps/DoneStep.tsx:27` reads `navigate('/settings/tks-mods')`. Phase 2 review already verified this; restated here for completeness. |
+
+## Items still pending
+
+The following items were on the Phase 1 / Phase 2 lists and have not landed on trunk:
+
+- **`AtomicTomlStore<T>` consolidation.** `src/openhuman/modes/tks_mods_config.rs:142`, `lockout.rs:153`, and the order-flow / onboarding / CDP-supervisor stores all still use direct `std::fs::write`. The architect-recommended `with_extension("toml.tmp") + rename` helper has not landed. **No `atomic-toml-store` branch exists on `origin` at this commit** (`git ls-remote origin | grep atomic-toml` returns empty). If FIX-B was assigned, the branch has not been pushed yet.
+- **PR #10 execution layer Tauri command wiring.** `app/src-tauri/src/execution_commands.rs` on `execution-v1` (`ca8c2f7a`) is still the stub described in the Phase 2 section above: `submit_bracket_order` invokes no gates, writes no audit, fabricates the proposal hash; `confirm_bracket_order` has no proposal-store lookup, no replay protection. No new commits on `execution-v1` since the Phase 2 review. If FIX-A was assigned, the wiring has not been pushed yet.
+- **Settings-save → `invalidate_tks_cache` hook.** The cache landed in `61429b8d` is correct in isolation but no UI / Tauri callsite invokes `invalidate_tks_cache()` on a settings-save event yet — the cache will only refresh on process restart until that hook lands. **No `ui-integration-pass` branch exists on `origin` at this commit.** If FIX-C was assigned, the branch has not been pushed yet.
+
+## Sign-off verdict on trunk
+
+**Trunk (`whiskey` at `61429b8d`): AMBER.**
+
+Reason in two sentences: every Phase 1 architect-required fix on the trunk surface has shipped — the IPC privilege-escalation hole, the contract drift, the publish_attention perf hazard, the lockout bypass, and the overlay forgery vector are all sealed with file:line evidence above. The amber (not green) verdict is because three follow-up items (`AtomicTomlStore` consolidation, execution-v1 command wiring, settings-save cache-invalidation hook) have **no in-flight branches on origin** as of this review, so the trunk is shippable for everything currently exposed to the UI but the execution layer cannot be turned on, and the new `publish_attention` cache won't see settings changes until the next process boot.
+
+By PR / branch:
+
+- PR #4 (`d0471bd5`): **signed off** — Tool impls with documented stubs.
+- PR #5 (`7abb0573`): **signed off** — DoneStep route correct.
+- PR #6 (`fa0e652e`): **signed off** — contract reconciled to PR #7's authoritative Rust shape.
+- PR #7 (`4ea8a0a0`): **signed off** — `CONTRACT.md` shipped, preset allowlist enforced.
+- PR #8 (`aed51f20`): **signed off** — supervisor real and tested, `tv_cdp_eval` gate present.
+- PR #9 (`6cc56c91`): **signed off** — outbox nonce landed with the merge.
+- Lockout server-gate (`2b69ab6f`): **signed off** — server-enforced, not UI-enforced.
+- publish_attention cache (`61429b8d`): **signed off as a perf fix**; the missing settings-save invalidation hook is tracked separately.
+- PR #10 (`execution-v1` at `ca8c2f7a`): **still not signed off.** Library mergeable, commands still bypass every gate. No movement since Phase 2.
+
+## Architectural decision worth memorializing
+
+**Decision: keep `tv_cdp_eval` callable but gated by calling-webview label, rather than eliminating it entirely.**
+
+The Phase 1 review surfaced that `tv_cdp_eval` lets any caller execute arbitrary JavaScript inside TradingView Desktop's logged-in renderer process. The defensible-on-first-principles move is to delete the command — a public IPC handler that runs caller-supplied JS in a third-party app's authenticated session is hard to defend. We deliberately did not delete it.
+
+Why we kept it: the same primitive is what makes Whiskey's TV integration story possible at all. The in-TV overlay panel (PR #9) injects a draggable UI into TV's renderer via Runtime.evaluate. The chart-state read (PR #4 `TvChartStateTool`) needs to run a TV-specific JS expression in TV's window context. Every internal CDP command (`tv_cdp_get_chart_state`, `tv_cdp_set_symbol`, `tv_cdp_draw_sltp`, `tv_cdp_clear_sltp`, `tv_cdp_get_order_flow_state`) emits hardcoded TV-internal JS — none of those work if the underlying eval is gone. The user's covenant is never-execute-trades; it is not never-touch-the-chart. Deleting the primitive would have forced every TV operation to ship as its own end-to-end Tauri command with no shared evaluation path, which (a) inflates the audit surface from one gated function to N, and (b) loses the flexibility to add a sixth TV operation without a Rust rebuild.
+
+So we chose the narrower fix: keep the primitive, install two structural defenses that make it safe in context. (1) **The public command gates on `webview.label() == "main"`** (`tradingview_cdp.rs:519`). Any future child webview, plugin webview, or settings-panel webview that calls `invoke('tv_cdp_eval', { expression })` is rejected at the IPC boundary. (2) **Internal callers route around the gate via `tv_cdp_eval_internal`** (`:539`) — but `_internal` is `pub(super)`, not a Tauri command, and every one of its callers has a hardcoded JS body. There is no path by which user-supplied or LLM-supplied JS reaches the eval call inside `_internal`; the only thing that varies is which TV-specific JS the internal helper picks up. The LLM tool-allowlist remains as a third independent gate on the Whiskey-mode side.
+
+The maintenance contract for future contributors: if you find yourself wanting to add a new Tauri command that does `tv_cdp_eval(expr, target, webview)` where `expr` flows from caller input, **stop**. The pattern is to add a new sibling to `tv_cdp_get_chart_state` et al. — a Tauri command whose body builds a hardcoded JS string from typed Rust arguments and calls `tv_cdp_eval_internal`. Caller-supplied JS through the public `tv_cdp_eval` is reserved for the `"main"` webview's developer-tools surface, not for product features. If a product feature needs eval-shaped behavior, build it as a new internal helper. The gate is load-bearing; do not loosen it.
