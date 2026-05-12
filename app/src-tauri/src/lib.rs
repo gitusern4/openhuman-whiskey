@@ -2142,6 +2142,8 @@ pub fn run() {
             // TK's Mods — SL/TP overlay commands.
             tradingview_cdp::tv_cdp_draw_sltp,
             tradingview_cdp::tv_cdp_clear_sltp,
+            // TK's Mods — order-flow CDP introspection.
+            tradingview_cdp::tv_cdp_get_order_flow_state,
             // TK's Mods — position sizer + walk-away lockout.
             compute_position_size,
             lockout_status,

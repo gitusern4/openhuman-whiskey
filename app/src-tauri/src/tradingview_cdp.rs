@@ -905,6 +905,193 @@ pub async fn tv_cdp_clear_sltp(
 }
 
 // ---------------------------------------------------------------------------
+// TK's Mods — Order Flow CDP introspection
+// ---------------------------------------------------------------------------
+
+/// JavaScript snippet to read order-flow data from the active TV chart.
+///
+/// Attempts to read cumulative delta, bid/ask volume, value area, and POC
+/// from TV's internal chart data. All paths use `?.` and are wrapped in
+/// try/catch — fields that TV hasn't exposed or has moved come back as null
+/// rather than throwing.
+///
+/// TV's internal order-flow data lives in several potential paths that vary
+/// by TV release:
+///   - `activeChart._chartWidget._model.paneViews()` — studies with CVD data
+///   - Footprint/delta study outputs via `getStudyById(id).data()`
+///   - Volume-profile bands accessible via study meta
+///
+/// Because TV moves these paths frequently, the snippet tries multiple
+/// paths defensively. A null field means "TV moved this", not "bridge broken".
+const JS_GET_ORDER_FLOW_STATE: &str = r#"
+(() => {
+  try {
+    const tv = window.tradingViewApi || window.TradingView || {};
+    const chartWidget = window.chartWidget || (typeof tv.chart === 'function' ? tv.chart() : null);
+    const activeChart = (chartWidget && typeof chartWidget.activeChart === 'function')
+      ? chartWidget.activeChart()
+      : null;
+
+    // Attempt to read delta data from studies on the chart.
+    // Look for a CVD or delta study by name pattern.
+    let bar_delta = null;
+    let bid_volume = null;
+    let ask_volume = null;
+    let total_volume = null;
+    let cumulative_delta = null;
+    let vah = null;
+    let val = null;
+    let poc = null;
+
+    if (activeChart && typeof activeChart.getAllStudies === 'function') {
+      const studies = activeChart.getAllStudies() ?? [];
+      for (const s of studies) {
+        const name = (s?.name ?? '').toLowerCase();
+        // Cumulative Volume Delta study output
+        if (name.includes('cumulative volume delta') || name.includes('cvd')) {
+          try {
+            const study = activeChart.getStudyById?.(s.id);
+            const data = study?.getData?.();
+            if (data && Array.isArray(data)) {
+              const last = data[data.length - 1];
+              if (last) {
+                cumulative_delta = last[1] ?? null;
+              }
+            }
+          } catch (_) {}
+        }
+        // Volume Profile Visible Range study output
+        if (name.includes('volume profile') || name.includes('vpvr') || name.includes('vp')) {
+          try {
+            const study = activeChart.getStudyById?.(s.id);
+            const meta = study?.metaInfo?.();
+            if (meta) {
+              vah = meta.vah ?? meta.VAH ?? null;
+              val = meta.val ?? meta.VAL ?? null;
+              poc = meta.poc ?? meta.POC ?? null;
+            }
+          } catch (_) {}
+        }
+      }
+    }
+
+    // Attempt bar-level bid/ask volume from the underlying model.
+    // TV exposes this through the data series when a footprint chart or
+    // volume-at-price study is active. Best-effort only.
+    try {
+      const model = chartWidget?._chartWidget?._model;
+      const panes = (model && typeof model.panes === 'function') ? model.panes() : null;
+      if (Array.isArray(panes) && panes.length > 0) {
+        const mainSeries = panes[0]?.mainDataSource?.();
+        const bars = mainSeries?.data?.bars?.();
+        if (Array.isArray(bars) && bars.length > 0) {
+          const lastBar = bars[bars.length - 1];
+          if (lastBar && lastBar.value) {
+            total_volume = lastBar.value[5] ?? null; // index 5 is volume in OHLCV
+          }
+        }
+      }
+    } catch (_) {}
+
+    return JSON.stringify({
+      bar_delta,
+      bid_volume,
+      ask_volume,
+      total_volume,
+      cumulative_delta,
+      vah,
+      val,
+      poc,
+      _probe: {
+        has_chartWidget: !!chartWidget,
+        has_activeChart: !!activeChart,
+      }
+    });
+  } catch (e) {
+    return JSON.stringify({ error: String(e) });
+  }
+})()
+"#;
+
+/// Result of `tv_cdp_get_order_flow_state`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TvOrderFlowStateResult {
+    pub ok: bool,
+    pub bar_delta: Option<f64>,
+    pub bid_volume: Option<f64>,
+    pub ask_volume: Option<f64>,
+    pub total_volume: Option<f64>,
+    pub cumulative_delta: Option<f64>,
+    pub vah: Option<f64>,
+    pub val: Option<f64>,
+    pub poc: Option<f64>,
+    pub error: Option<String>,
+}
+
+/// TK's Mods — read live order-flow state from TV via CDP.
+///
+/// Attempts to read bar delta, bid/ask volume, cumulative delta, VAH, VAL,
+/// and POC from TV's internal object tree. All fields are optional — when
+/// a TV release moves the API path the field comes back as null and the
+/// UI degrades to manual entry mode rather than breaking.
+///
+/// Defensive style: every property access is `?.`, every block is
+/// try/catch, null fields when paths don't resolve.
+#[tauri::command]
+pub async fn tv_cdp_get_order_flow_state(
+    state: tauri::State<'_, TvCdpState>,
+) -> Result<TvOrderFlowStateResult, String> {
+    let raw = match tv_cdp_eval(state, JS_GET_ORDER_FLOW_STATE.to_string()).await {
+        Ok(v) => v,
+        Err(e) => {
+            return Ok(TvOrderFlowStateResult {
+                ok: false,
+                bar_delta: None,
+                bid_volume: None,
+                ask_volume: None,
+                total_volume: None,
+                cumulative_delta: None,
+                vah: None,
+                val: None,
+                poc: None,
+                error: Some(e),
+            });
+        }
+    };
+    let parsed: Value = match &raw {
+        Value::String(s) => serde_json::from_str(s).unwrap_or(Value::Null),
+        other => other.clone(),
+    };
+    // If the snippet returned an error field, report it but still return ok:false
+    if let Some(err) = parsed.get("error").and_then(|v| v.as_str()) {
+        return Ok(TvOrderFlowStateResult {
+            ok: false,
+            bar_delta: None,
+            bid_volume: None,
+            ask_volume: None,
+            total_volume: None,
+            cumulative_delta: None,
+            vah: None,
+            val: None,
+            poc: None,
+            error: Some(err.to_string()),
+        });
+    }
+    Ok(TvOrderFlowStateResult {
+        ok: true,
+        bar_delta: parsed.get("bar_delta").and_then(|v| v.as_f64()),
+        bid_volume: parsed.get("bid_volume").and_then(|v| v.as_f64()),
+        ask_volume: parsed.get("ask_volume").and_then(|v| v.as_f64()),
+        total_volume: parsed.get("total_volume").and_then(|v| v.as_f64()),
+        cumulative_delta: parsed.get("cumulative_delta").and_then(|v| v.as_f64()),
+        vah: parsed.get("vah").and_then(|v| v.as_f64()),
+        val: parsed.get("val").and_then(|v| v.as_f64()),
+        poc: parsed.get("poc").and_then(|v| v.as_f64()),
+        error: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

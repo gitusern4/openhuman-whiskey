@@ -28,6 +28,7 @@ import { THEMES, useTheme } from '../../../hooks/useTheme';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import ModesPanelBody from './ModesPanelBody';
+import OrderFlowCard from './OrderFlowCard';
 import TvBridgePanelBody from './TvBridgePanelBody';
 
 // ---------------------------------------------------------------------------
@@ -593,6 +594,18 @@ const TksModsPanel = () => {
               </div>
             ) : null}
           </section>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            SECTION 3b — Order Flow
+        ═══════════════════════════════════════════════════════════════════ */}
+        <div>
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+            Order Flow
+          </h3>
+          <div className="space-y-3">
+            <OrderFlowCard tvAttached={tvAttached} />
+          </div>
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════════
