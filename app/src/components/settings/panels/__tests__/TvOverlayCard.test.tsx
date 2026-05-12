@@ -342,7 +342,7 @@ describe('Overlay re-inject on reattached', () => {
     );
 
     const invokeCallsBefore = mockInvoke.mock.calls.filter(
-      ([c]: [string]) => c === 'tv_overlay_inject'
+      (call: unknown[]) => call[0] === 'tv_overlay_inject'
     ).length;
 
     // Fire reattached event.
@@ -352,7 +352,7 @@ describe('Overlay re-inject on reattached', () => {
 
     await waitFor(() => {
       const injectCalls = mockInvoke.mock.calls.filter(
-        ([c]: [string]) => c === 'tv_overlay_inject'
+        (call: unknown[]) => call[0] === 'tv_overlay_inject'
       ).length;
       expect(injectCalls).toBeGreaterThan(invokeCallsBefore);
     });
@@ -373,7 +373,7 @@ describe('Overlay re-inject on reattached', () => {
     );
 
     const invokeCallsBefore = mockInvoke.mock.calls.filter(
-      ([c]: [string]) => c === 'tv_overlay_inject'
+      (call: unknown[]) => call[0] === 'tv_overlay_inject'
     ).length;
 
     // Fire reattached without overlay ever being enabled.
@@ -385,7 +385,7 @@ describe('Overlay re-inject on reattached', () => {
     await new Promise(r => setTimeout(r, 50));
 
     const injectCalls = mockInvoke.mock.calls.filter(
-      ([c]: [string]) => c === 'tv_overlay_inject'
+      (call: unknown[]) => call[0] === 'tv_overlay_inject'
     ).length;
     expect(injectCalls).toBe(invokeCallsBefore);
   });

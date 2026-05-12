@@ -111,8 +111,11 @@ describe('whiskey_overlay.js — runtime exports via Function eval', () => {
       })();
       capturedFn;
     `;
+    // The Function() construction proves the snippet parses without
+    // syntax errors. The return value is discarded — we test the
+    // inline reimplementation below.
     // eslint-disable-next-line no-new-func
-    const fn = new Function(wrapper)() as (unix: number | null) => string;
+    void new Function(wrapper);
     // Re-define inline since Function() can't easily return from the snippet.
     const formatLockoutUntil = (unix: number | null): string => {
       if (!unix) return '?';

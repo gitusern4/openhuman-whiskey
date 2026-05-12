@@ -10,7 +10,7 @@
  *   - WalkAwayLockout hidden when not active
  *   - WalkAwayLockout visible with countdown when active
  */
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import DailyPnLGauge from '../src/components/settings/panels/DailyPnLGauge';

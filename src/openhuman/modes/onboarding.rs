@@ -87,53 +87,21 @@ fn state_path() -> Option<PathBuf> {
 }
 
 fn load_state() -> OnboardingState {
+    // Route through AtomicTomlStore — same atomic-write + corrupt-tolerant
+    // semantics as every other persistence site in modes/.
     let Some(path) = state_path() else {
         return OnboardingState::default();
     };
-    let raw = match std::fs::read_to_string(&path) {
-        Ok(r) => r,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return OnboardingState::default();
-        }
-        Err(err) => {
-            log::warn!("[modes/onboarding] read {} failed: {err}", path.display());
-            return OnboardingState::default();
-        }
-    };
-    match toml::from_str::<OnboardingState>(&raw) {
-        Ok(state) => state,
-        Err(err) => {
-            log::warn!(
-                "[modes/onboarding] parse {} failed: {err}; resetting to defaults",
-                path.display()
-            );
-            OnboardingState::default()
-        }
-    }
+    crate::openhuman::modes::persistence::AtomicTomlStore::<OnboardingState>::new(path).load()
 }
 
 fn save_state(state: &OnboardingState) {
     let Some(path) = state_path() else {
         return;
     };
-    if let Some(parent) = path.parent() {
-        if let Err(err) = std::fs::create_dir_all(parent) {
-            log::warn!(
-                "[modes/onboarding] mkdir {} failed: {err}; skip save",
-                parent.display()
-            );
-            return;
-        }
-    }
-    let raw = match toml::to_string_pretty(state) {
-        Ok(r) => r,
-        Err(err) => {
-            log::warn!("[modes/onboarding] serialize failed: {err}; skip save");
-            return;
-        }
-    };
-    if let Err(err) = std::fs::write(&path, raw) {
-        log::warn!("[modes/onboarding] write {} failed: {err}", path.display());
+    let store = crate::openhuman::modes::persistence::AtomicTomlStore::<OnboardingState>::new(path);
+    if let Err(err) = store.save(state) {
+        log::warn!("[modes/onboarding] atomic save failed: {err}");
     } else {
         log::info!(
             "[modes/onboarding] saved completed={} step={}",

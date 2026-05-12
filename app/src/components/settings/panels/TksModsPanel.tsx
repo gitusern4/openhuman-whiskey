@@ -181,7 +181,11 @@ const TksModsPanel = () => {
   // ── Walk-away lockout ──────────────────────────────────────────────────────
   const [lockoutStatus, setLockoutStatus] = useState<LockoutStatus | null>(null);
   const [lockoutPending, setLockoutPending] = useState(false);
-  const [forceResetArmed, setForceResetArmed] = useState(false);
+  // Legacy UI-side reset-armed bool retained as a setter-only sink for
+  // older test paths that still call setForceResetArmed. The actual
+  // gate is now server-side (lockout_arm_reset + 5-min cooldown).
+  // Read with a no-op underscore prefix to satisfy noUnusedLocals.
+  const [, setForceResetArmed] = useState(false);
   const [maxDailyLoss, setMaxDailyLoss] = useState('');
   const [maxConsecLosses, setMaxConsecLosses] = useState('');
   const [cooldownMins, setCooldownMins] = useState('60');

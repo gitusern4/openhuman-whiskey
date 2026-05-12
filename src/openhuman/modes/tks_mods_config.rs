@@ -170,6 +170,7 @@ mod tests {
             hide_risk_pct: true,
             pretrade_checklist: default_checklist(),
             symbol_favorites: vec![],
+            order_flow: Default::default(),
         };
         save(&cfg);
         assert!(path.exists());
