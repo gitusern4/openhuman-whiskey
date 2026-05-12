@@ -136,8 +136,17 @@ impl Tool for ImageGenPollinationsTool {
     }
 
     fn permission_level(&self) -> PermissionLevel {
-        // Network-only call, no host writes other than under the
-        // workspace's generated_images subdir.
+        // The tool reaches the network (Pollinations.ai) AND writes
+        // to disk under the workspace's generated_images subdir. The
+        // permission system has no `Network` variant; `Write` is the
+        // closest fit and correctly gates against tools that must
+        // not write at all.
+        //
+        // WHISKEY_AUDIT.md L14: previous comment claimed "no host
+        // writes other than under generated_images" — true only
+        // because save_path is now skip_deserializing (H3 fix). With
+        // an LLM-controllable save_path the claim was false, hence
+        // the lockdown in commit 58716e0f.
         PermissionLevel::Write
     }
 

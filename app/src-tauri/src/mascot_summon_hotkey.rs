@@ -72,14 +72,17 @@ pub(crate) fn register_default(app: &AppHandle<AppRuntime>) {
         return;
     }
 
-    let state = app.state::<MascotSummonHotkeyState>();
-    let mut guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
-
+    // WHISKEY_AUDIT.md M4: don't hold the state mutex across the
+    // global_shortcut plugin call. Acquire it briefly only after
+    // each successful install. The previous version locked once
+    // before the loop and held the guard through every plugin call,
+    // serializing any future second reader of MascotSummonHotkeyState
+    // (e.g. an in-flight UI rebind racing with boot-time install).
     for binding in &bindings {
         match install_handler(app, binding.as_str()) {
             Ok(()) => {
                 log::info!("[mascot-hotkey] registered {binding:?}");
-                guard.push(binding.clone());
+                push_to_state(app, binding);
             }
             Err(err) => log::warn!(
                 "[mascot-hotkey] failed to register {binding:?}: {err}; \
@@ -87,6 +90,25 @@ pub(crate) fn register_default(app: &AppHandle<AppRuntime>) {
             ),
         }
     }
+}
+
+/// Briefly acquire the state mutex to push a single newly-installed
+/// shortcut. WHISKEY_AUDIT.md M4 helper.
+fn push_to_state(app: &AppHandle<AppRuntime>, binding: &str) {
+    let state = app.state::<MascotSummonHotkeyState>();
+    let mut guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
+    guard.push(binding.to_string());
+}
+
+/// Replace the state Vec wholesale to match an externally-tracked
+/// snapshot. Used by [`register`] to keep the in-memory state in
+/// sync with what's actually live on the global-shortcut plugin
+/// after every successful install/unregister, including during
+/// rollback. WHISKEY_AUDIT.md M1.
+fn sync_state_to(app: &AppHandle<AppRuntime>, snapshot: &[String]) {
+    let state = app.state::<MascotSummonHotkeyState>();
+    let mut guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
+    *guard = snapshot.to_vec();
 }
 
 /// Re-register the mascot-summon hotkey to a new binding string.
@@ -99,12 +121,6 @@ pub(crate) fn register_default(app: &AppHandle<AppRuntime>) {
 pub(crate) async fn register(app: AppHandle<AppRuntime>, shortcut: String) -> Result<(), String> {
     log::info!("[mascot-hotkey] register: shortcut={shortcut}");
 
-    let old_shortcuts = {
-        let state = app.state::<MascotSummonHotkeyState>();
-        let guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
-        guard.clone()
-    };
-
     let expanded_shortcuts = expand_dictation_shortcuts(&shortcut);
     if expanded_shortcuts.is_empty() {
         return Err("Shortcut cannot be empty".to_string());
@@ -114,51 +130,85 @@ pub(crate) async fn register(app: AppHandle<AppRuntime>, shortcut: String) -> Re
         expanded_shortcuts.join(", ")
     );
 
-    let mut unregistered_old: Vec<String> = Vec::new();
+    // WHISKEY_AUDIT.md M1: maintain a single `currently_installed`
+    // tracker that always reflects what the global-shortcut plugin
+    // *actually* has live. Update both this tracker AND the shared
+    // state Vec after every successful op (including during rollback)
+    // so the in-memory state can never disagree with reality on a
+    // partial failure.
+    let old_shortcuts = {
+        let state = app.state::<MascotSummonHotkeyState>();
+        let guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
+        guard.clone()
+    };
+    let mut currently_installed: Vec<String> = old_shortcuts.clone();
+
+    // Phase 1: unregister the old set. Update tracker as each op
+    // succeeds; on failure, the tracker still reflects what's live.
     for old in &old_shortcuts {
         log::debug!("[mascot-hotkey] unregistering previous shortcut: {old}");
         if let Err(e) = app.global_shortcut().unregister(old.as_str()) {
-            for restored in &unregistered_old {
-                if let Err(restore_err) = install_handler(&app, restored.as_str()) {
-                    log::warn!(
-                        "[mascot-hotkey] rollback failed while restoring old shortcut '{restored}': {restore_err}"
-                    );
-                }
-            }
+            // Tracker already accurate (we hadn't removed `old` from
+            // it yet, and everything previously unregistered IS still
+            // unregistered). Nothing to roll back here — sync state
+            // and bail.
+            sync_state_to(&app, &currently_installed);
             return Err(format!(
                 "Failed to unregister previous shortcut '{old}': {e}"
             ));
         }
-        unregistered_old.push(old.clone());
+        currently_installed.retain(|s| s != old);
+        sync_state_to(&app, &currently_installed);
     }
 
-    let mut newly_registered: Vec<String> = Vec::new();
-    for shortcut_variant in &expanded_shortcuts {
-        if let Err(err) = install_handler(&app, shortcut_variant.as_str()) {
-            log::error!("[mascot-hotkey] failed to register shortcut '{shortcut_variant}': {err}");
-            for registered in &newly_registered {
-                if let Err(unregister_err) = app.global_shortcut().unregister(registered.as_str()) {
+    // Phase 2: install the new set. On per-variant failure, unregister
+    // anything we already installed in this phase, attempt to restore
+    // the old set, and sync state to whatever ends up live.
+    for new_variant in &expanded_shortcuts {
+        if let Err(err) = install_handler(&app, new_variant.as_str()) {
+            log::error!("[mascot-hotkey] failed to register shortcut '{new_variant}': {err}");
+
+            // Roll back the new ones we DID install.
+            let already_installed_new: Vec<String> = currently_installed
+                .iter()
+                .filter(|s| expanded_shortcuts.contains(s))
+                .cloned()
+                .collect();
+            for installed in &already_installed_new {
+                if let Err(unregister_err) = app.global_shortcut().unregister(installed.as_str()) {
                     log::warn!(
-                        "[mascot-hotkey] rollback failed while unregistering '{registered}': {unregister_err}"
+                        "[mascot-hotkey] rollback failed while unregistering '{installed}': {unregister_err}"
                     );
+                } else {
+                    currently_installed.retain(|s| s != installed);
                 }
+                // Either way, sync state so it tracks reality.
+                sync_state_to(&app, &currently_installed);
             }
+
+            // Best-effort restore of the old set — track the actual
+            // restored shortcuts so state stays accurate.
             for old in &old_shortcuts {
-                if let Err(restore_err) = install_handler(&app, old.as_str()) {
-                    log::warn!(
-                        "[mascot-hotkey] rollback failed while restoring old shortcut '{old}': {restore_err}"
-                    );
+                if currently_installed.contains(old) {
+                    continue; // already live (e.g. overlap with new set we never unregistered)
+                }
+                match install_handler(&app, old.as_str()) {
+                    Ok(()) => {
+                        currently_installed.push(old.clone());
+                        sync_state_to(&app, &currently_installed);
+                    }
+                    Err(restore_err) => {
+                        log::warn!(
+                            "[mascot-hotkey] rollback failed while restoring old shortcut '{old}': {restore_err}"
+                        );
+                    }
                 }
             }
+
             return Err(err);
         }
-        newly_registered.push(shortcut_variant.clone());
-    }
-
-    {
-        let state = app.state::<MascotSummonHotkeyState>();
-        let mut guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
-        *guard = expanded_shortcuts.clone();
+        currently_installed.push(new_variant.clone());
+        sync_state_to(&app, &currently_installed);
     }
 
     log::info!(

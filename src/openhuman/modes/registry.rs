@@ -159,22 +159,35 @@ mod tests {
     /// RAII guard: redirect the persistence file to a fresh temp path
     /// for the duration of one test, then clear the env var on drop so
     /// nothing leaks into a sibling test or the user's home dir.
+    ///
+    /// WHISKEY_AUDIT.md M5: also holds a process-wide
+    /// `EnvVarTestGuard` so this test serializes against any other
+    /// env-var-touching test in the binary (the per-file `TEST_LOCK`
+    /// only serializes within `modes::registry::tests`; the env var
+    /// itself is process-global).
     struct PersistenceRedirect {
         _tmp: tempfile::TempDir,
+        _env_lock: super::EnvVarTestGuard,
     }
     impl PersistenceRedirect {
         fn new() -> Self {
+            let env_lock = super::EnvVarTestGuard::new();
             let tmp = tempfile::tempdir().expect("tempdir");
             std::env::set_var(
                 TEST_OVERRIDE_ENV_FOR_TESTS,
                 tmp.path().join("active_mode.toml"),
             );
-            Self { _tmp: tmp }
+            Self {
+                _tmp: tmp,
+                _env_lock: env_lock,
+            }
         }
     }
     impl Drop for PersistenceRedirect {
         fn drop(&mut self) {
             std::env::remove_var(TEST_OVERRIDE_ENV_FOR_TESTS);
+            // _env_lock drops after env var cleared so the next test's
+            // EnvVarTestGuard acquire sees a clean env.
         }
     }
 

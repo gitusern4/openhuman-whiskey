@@ -172,3 +172,41 @@ impl Drop for ActiveModeGuard {
         // _lock drops here, releasing the mutex.
     }
 }
+
+/// WHISKEY_AUDIT.md M5/M6: cross-crate test serializer for tests that
+/// mutate process-wide environment variables. Env vars (e.g.
+/// `OPENHUMAN_WHISKEY_MEMORY_ROOT`, `OPENHUMAN_ACTIVE_MODE_FILE`) are
+/// observable by every thread, so two tests that each set/clear the
+/// same variable will race even when their respective per-file test
+/// locks are held — they're locking different mutexes.
+///
+/// Pattern:
+///   let _g = crate::openhuman::modes::EnvVarTestGuard::new();
+///   std::env::set_var("OPENHUMAN_WHISKEY_MEMORY_ROOT", "/tmp/foo");
+///   // ... test body that depends on or mutates env vars ...
+///   // guard drop → releases the lock so the next env-var test can
+///   // acquire it.
+///
+/// Does NOT reset the env var on drop (different tests want different
+/// shapes of cleanup); tests are expected to do their own cleanup
+/// inside the body or via their own RAII helpers (e.g.
+/// whiskey.rs's EnvVarGuard). This guard's only job is mutual
+/// exclusion, not state restoration.
+///
+/// Distinct mutex from `ActiveModeGuard` so a test that needs both
+/// (e.g. registry tests that override the persistence file path AND
+/// set active mode) acquires both in the same order to avoid
+/// deadlock — by convention: env-var lock first, then mode lock.
+#[cfg(any(test, feature = "test-utils"))]
+pub struct EnvVarTestGuard {
+    _lock: Option<std::sync::MutexGuard<'static, ()>>,
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl EnvVarTestGuard {
+    pub fn new() -> Self {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let guard = LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        Self { _lock: Some(guard) }
+    }
+}

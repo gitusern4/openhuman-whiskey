@@ -8,9 +8,13 @@ This fork of `tinyhumansai/openhuman` adds:
    every Whiskey-mode prompt
 5. A free image-gen tool via Pollinations.ai
 
-**Branch state at d-day**: 18 commits on `whiskey` (PR #1 against
-upstream), **17/17 PR checks green** on the head commit `620573a5`.
-Every architectural layer of the Whiskey loop is wired end-to-end.
+**Branch state**: ~30 commits on `whiskey` (PR #1 against upstream),
+17/17 PR checks green on each pushed batch. Every architectural layer
+of the Whiskey loop is wired end-to-end. See `git log origin/main..whiskey`
+for the live commit ledger and `WHISKEY_AUDIT.md` for the capability
+review (2 critical + 5 high + 8 medium + 9 low findings; 2/2 critical,
+5/5 high, and the higher-leverage mediums all closed in subsequent
+audit-fix commits).
 
 The one piece that still doesn't work is **native ARM64 Windows builds**
 — blocked on two upstream-vendored native deps (`whisper-rs-sys` +

@@ -387,22 +387,44 @@ mod tests {
 
     /// Guard that resets an env var on drop so a panicking test
     /// can't leak state into sibling tests.
+    ///
+    /// WHISKEY_AUDIT.md M5/M6: env vars are process-global, so two
+    /// tests in different files that mutate ANY env var can race
+    /// even when their respective per-file test locks are held.
+    /// EnvVarGuard now also holds a process-wide
+    /// `EnvVarTestGuard` for the lifetime of the guard, serializing
+    /// against any other env-var-touching test in the binary.
     struct EnvVarGuard {
         key: &'static str,
         prior: Option<String>,
+        // Field, not phantom — holding the guard for the lifetime of
+        // EnvVarGuard is exactly the point. Drops in field-decl
+        // order (this last) so the env restoration above happens
+        // before we release the env-var test lock.
+        _env_lock: crate::openhuman::modes::EnvVarTestGuard,
     }
 
     impl EnvVarGuard {
         fn set(key: &'static str, value: &str) -> Self {
+            let lock = crate::openhuman::modes::EnvVarTestGuard::new();
             let prior = std::env::var(key).ok();
             std::env::set_var(key, value);
-            Self { key, prior }
+            Self {
+                key,
+                prior,
+                _env_lock: lock,
+            }
         }
 
         fn unset(key: &'static str) -> Self {
+            let lock = crate::openhuman::modes::EnvVarTestGuard::new();
             let prior = std::env::var(key).ok();
             std::env::remove_var(key);
-            Self { key, prior }
+            Self {
+                key,
+                prior,
+                _env_lock: lock,
+            }
         }
     }
 
