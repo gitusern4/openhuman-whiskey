@@ -25,6 +25,7 @@
 
 pub mod default;
 pub mod memory_cache;
+pub mod persistence;
 pub mod registry;
 pub mod whiskey;
 

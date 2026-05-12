@@ -7,10 +7,16 @@
 //! returns an `Arc<dyn Mode>` so the mode object can outlive the lock
 //! guard.
 //!
-//! Mode selection is persisted via `~/.openhuman/config.toml` under the
-//! key `agent.active_mode = "whiskey"` (or `"default"`). The config
-//! loader calls [`set_active_mode`] on boot; the settings UI calls it
-//! when the user picks a different mode in the dropdown.
+//! Mode selection is persisted to `<openhuman_dir>/active_mode.toml`
+//! via the [`super::persistence`] helper (the previous "via
+//! `~/.openhuman/config.toml` under `agent.active_mode`" claim is
+//! superseded by this dedicated file). On startup the `ACTIVE` lazy
+//! initializer attempts a `persistence::load()` and, when it returns a
+//! known mode id, swaps the registry's `DefaultMode` fallback for that
+//! mode. On every successful [`set_active_mode`] call we fire-and-
+//! forget a `persistence::save(id)` so the next process boot sees the
+//! same selection. The settings UI calls [`set_active_mode`] when the
+//! user picks a different mode in the dropdown.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -20,6 +26,7 @@ use parking_lot::RwLock;
 
 use serde::Serialize;
 
+use super::persistence;
 use super::{DefaultMode, Mode, ModeId, SharedMode, WhiskeyMode};
 
 /// Snapshot of one mode for the settings UI dropdown.
@@ -78,6 +85,19 @@ static ACTIVE: Lazy<RwLock<SharedMode>> = Lazy::new(|| {
     let default = REGISTRY
         .get(DefaultMode::ID)
         .expect("DefaultMode is always registered");
+    // Best-effort: if a persisted selection exists AND the id is known
+    // to the registry, restore it. Otherwise fall through to default
+    // so a missing/corrupt persistence file never blocks boot.
+    if let Some(persisted_id) = persistence::load() {
+        if let Some(persisted_mode) = REGISTRY.get(&persisted_id) {
+            log::info!("[modes] restored persisted active mode: {persisted_id}");
+            return RwLock::new(persisted_mode);
+        } else {
+            log::warn!(
+                "[modes] persisted active_mode={persisted_id} is not registered; falling back to default"
+            );
+        }
+    }
     RwLock::new(default)
 });
 
@@ -98,6 +118,10 @@ pub fn set_active_mode(id: &str) -> Result<(), String> {
                 id
             );
             *ACTIVE.write() = mode;
+            // Fire-and-forget: errors are logged inside `save` and
+            // never propagated — a persistence failure must not break
+            // the in-process mode switch the user just requested.
+            persistence::save(id);
             Ok(())
         }
         None => {
@@ -123,13 +147,36 @@ pub fn list_modes() -> Vec<ModeDescriptor> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    /// Process-wide lock so the four logical test cases below can mutate
-    /// the global active-mode pointer without races. Using a single
-    /// in-file `Mutex` instead of an external `serial_test` dev-dep
-    /// keeps the project's dependency surface flat.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    /// Share `persistence::TEST_LOCK` so tests in this module and the
+    /// persistence module can't race on the env-var override that
+    /// redirects the persistence file to a temp dir. Each test below
+    /// sets the override on entry and clears it on drop, so existing
+    /// dev/CI users never see writes to `~/.openhuman/active_mode.toml`
+    /// during `cargo test`.
+    use super::persistence::{TEST_LOCK, TEST_OVERRIDE_ENV_FOR_TESTS};
+
+    /// RAII guard: redirect the persistence file to a fresh temp path
+    /// for the duration of one test, then clear the env var on drop so
+    /// nothing leaks into a sibling test or the user's home dir.
+    struct PersistenceRedirect {
+        _tmp: tempfile::TempDir,
+    }
+    impl PersistenceRedirect {
+        fn new() -> Self {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            std::env::set_var(
+                TEST_OVERRIDE_ENV_FOR_TESTS,
+                tmp.path().join("active_mode.toml"),
+            );
+            Self { _tmp: tmp }
+        }
+    }
+    impl Drop for PersistenceRedirect {
+        fn drop(&mut self) {
+            std::env::remove_var(TEST_OVERRIDE_ENV_FOR_TESTS);
+        }
+    }
 
     fn reset_to_default() {
         let _ = set_active_mode(DefaultMode::ID);
@@ -138,6 +185,7 @@ mod tests {
     #[test]
     fn default_mode_is_active_at_startup() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _redirect = PersistenceRedirect::new();
         reset_to_default();
         assert_eq!(active_mode().id(), DefaultMode::ID);
     }
@@ -145,6 +193,7 @@ mod tests {
     #[test]
     fn list_includes_default_and_whiskey() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _redirect = PersistenceRedirect::new();
         let ids: Vec<&str> = list_modes().into_iter().map(|d| d.id).collect();
         assert!(ids.contains(&DefaultMode::ID));
         assert!(ids.contains(&WhiskeyMode::ID));
@@ -153,6 +202,7 @@ mod tests {
     #[test]
     fn switch_to_whiskey_then_back() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _redirect = PersistenceRedirect::new();
         reset_to_default();
         assert!(set_active_mode(WhiskeyMode::ID).is_ok());
         assert_eq!(active_mode().id(), WhiskeyMode::ID);
@@ -165,10 +215,25 @@ mod tests {
     #[test]
     fn switch_to_unknown_id_is_rejected() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _redirect = PersistenceRedirect::new();
         reset_to_default();
         let err = set_active_mode("does-not-exist").unwrap_err();
         assert!(err.contains("unknown mode id"));
         // Active mode unchanged.
         assert_eq!(active_mode().id(), DefaultMode::ID);
+    }
+
+    #[test]
+    fn set_active_mode_persists_to_disk() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _redirect = PersistenceRedirect::new();
+        reset_to_default();
+        assert!(set_active_mode(WhiskeyMode::ID).is_ok());
+        // The fire-and-forget save should have written the persisted id
+        // — exercise it via the public load() to avoid coupling to the
+        // file path used internally by the redirect.
+        assert_eq!(persistence::load().as_deref(), Some(WhiskeyMode::ID));
+        reset_to_default();
+        assert_eq!(persistence::load().as_deref(), Some(DefaultMode::ID));
     }
 }
