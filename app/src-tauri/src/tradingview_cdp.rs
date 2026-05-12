@@ -541,28 +541,22 @@ pub async fn tv_cdp_get_chart_state(
         Value::String(s) => serde_json::from_str(s).unwrap_or(Value::Null),
         other => other.clone(),
     };
-    let indicators = parsed
-        .get("indicators")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .map(|i| TvIndicatorSummary {
-                    id: i.get("id").and_then(|x| x.as_str()).map(str::to_string),
-                    name: i.get("name").and_then(|x| x.as_str()).map(str::to_string),
-                })
-                .collect::<Vec<_>>()
-        });
-    let shapes = parsed
-        .get("shapes")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .map(|i| TvShapeSummary {
-                    id: i.get("id").and_then(|x| x.as_str()).map(str::to_string),
-                    name: i.get("name").and_then(|x| x.as_str()).map(str::to_string),
-                })
-                .collect::<Vec<_>>()
-        });
+    let indicators = parsed.get("indicators").and_then(|v| v.as_array()).map(|arr| {
+        arr.iter()
+            .map(|i| TvIndicatorSummary {
+                id: i.get("id").and_then(|x| x.as_str()).map(str::to_string),
+                name: i.get("name").and_then(|x| x.as_str()).map(str::to_string),
+            })
+            .collect::<Vec<_>>()
+    });
+    let shapes = parsed.get("shapes").and_then(|v| v.as_array()).map(|arr| {
+        arr.iter()
+            .map(|i| TvShapeSummary {
+                id: i.get("id").and_then(|x| x.as_str()).map(str::to_string),
+                name: i.get("name").and_then(|x| x.as_str()).map(str::to_string),
+            })
+            .collect::<Vec<_>>()
+    });
     Ok(TvChartState {
         symbol: parsed
             .get("symbol")
@@ -689,15 +683,27 @@ fn find_tv_exe_windows() -> Option<std::path::PathBuf> {
     // %LOCALAPPDATA%\Programs\TradingView\TradingView.exe
     if let Some(localappdata) = std::env::var_os("LOCALAPPDATA") {
         let base = PathBuf::from(&localappdata);
-        candidates.push(base.join("Programs").join("TradingView").join("TradingView.exe"));
+        candidates.push(
+            base.join("Programs")
+                .join("TradingView")
+                .join("TradingView.exe"),
+        );
         candidates.push(base.join("TradingView").join("TradingView.exe"));
     }
     // Machine-wide install variants.
     if let Some(pf) = std::env::var_os("ProgramFiles") {
-        candidates.push(PathBuf::from(&pf).join("TradingView").join("TradingView.exe"));
+        candidates.push(
+            PathBuf::from(&pf)
+                .join("TradingView")
+                .join("TradingView.exe"),
+        );
     }
     if let Some(pfx86) = std::env::var_os("ProgramFiles(x86)") {
-        candidates.push(PathBuf::from(&pfx86).join("TradingView").join("TradingView.exe"));
+        candidates.push(
+            PathBuf::from(&pfx86)
+                .join("TradingView")
+                .join("TradingView.exe"),
+        );
     }
 
     candidates.into_iter().find(|p| p.is_file())
