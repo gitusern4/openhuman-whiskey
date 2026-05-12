@@ -167,11 +167,11 @@ mod tests {
     /// itself is process-global).
     struct PersistenceRedirect {
         _tmp: tempfile::TempDir,
-        _env_lock: super::EnvVarTestGuard,
+        _env_lock: crate::openhuman::modes::EnvVarTestGuard,
     }
     impl PersistenceRedirect {
         fn new() -> Self {
-            let env_lock = super::EnvVarTestGuard::new();
+            let env_lock = crate::openhuman::modes::EnvVarTestGuard::new();
             let tmp = tempfile::tempdir().expect("tempdir");
             std::env::set_var(
                 TEST_OVERRIDE_ENV_FOR_TESTS,
