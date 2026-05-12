@@ -931,14 +931,28 @@ fn lockout_trip(reason: String) -> openhuman_core::openhuman::modes::lockout::Lo
     openhuman_core::openhuman::modes::lockout::status(&state)
 }
 
-/// TK's Mods — force-reset an active lockout. The caller is expected
-/// to gate this behind an explicit `force_reset_armed` toggle in the UI
-/// so a misclick cannot trivially clear a live lockout.
+/// TK's Mods — arm the 5-minute force-reset cooldown. Must be called
+/// before `lockout_reset` will actually clear an active lockout. The
+/// server-side timer is the friction layer — a tilted trader cannot
+/// bypass the lockout via DevTools IPC because they still have to
+/// sit through the 5 minutes after arming.
 #[tauri::command]
-fn lockout_reset() -> openhuman_core::openhuman::modes::lockout::LockoutStatus {
+fn lockout_arm_reset() -> openhuman_core::openhuman::modes::lockout::LockoutStatus {
     let mut state = openhuman_core::openhuman::modes::lockout::load();
-    openhuman_core::openhuman::modes::lockout::force_reset(&mut state);
+    openhuman_core::openhuman::modes::lockout::arm_force_reset(&mut state);
     openhuman_core::openhuman::modes::lockout::status(&state)
+}
+
+/// TK's Mods — request the force-reset of an active lockout. Only
+/// honored after `lockout_arm_reset` was called AT LEAST 5 minutes
+/// ago. The server-side gate (in `lockout::request_force_reset`)
+/// is the actual enforcement — UI-level booleans don't survive an
+/// IPC bypass via DevTools console. Architect review 2026-05-12.
+#[tauri::command]
+fn lockout_reset() -> Result<openhuman_core::openhuman::modes::lockout::LockoutStatus, String> {
+    let mut state = openhuman_core::openhuman::modes::lockout::load();
+    openhuman_core::openhuman::modes::lockout::request_force_reset(&mut state)?;
+    Ok(openhuman_core::openhuman::modes::lockout::status(&state))
 }
 
 /// TK's Mods — save updated lockout config (thresholds + cooldown).
@@ -2197,6 +2211,7 @@ pub fn run() {
             compute_position_size,
             lockout_status,
             lockout_trip,
+            lockout_arm_reset,
             lockout_reset,
             lockout_set_config,
             // Order-flow — config, bar recording, tagging, preset apply.

@@ -92,6 +92,16 @@ pub struct LockoutState {
     /// Human-readable reason the lockout was tripped.
     #[serde(default)]
     pub lock_reason: Option<String>,
+
+    /// Server-side armed-reset timestamp. When the user clicks "arm
+    /// force-reset" the system records this Unix-seconds + 300 (5
+    /// min). `request_force_reset` will only honor the reset after
+    /// that timestamp passes. Defends against DevTools-IPC bypass:
+    /// a tilted trader calling `invoke('lockout_reset')` first has
+    /// to arm + wait through the cooldown. Architect review
+    /// 2026-05-12.
+    #[serde(default)]
+    pub armed_for_reset_until: Option<u64>,
 }
 
 impl Default for LockoutState {
@@ -102,6 +112,7 @@ impl Default for LockoutState {
             consecutive_losses: 0,
             locked_until_unix: None,
             lock_reason: None,
+            armed_for_reset_until: None,
         }
     }
 }
@@ -219,12 +230,60 @@ pub fn trip(state: &mut LockoutState, reason: &str) {
     save(state);
 }
 
-/// Force-reset an active lockout. Requires deliberate use — the UI
-/// should gate this behind an extra confirmation toggle.
+/// Force-reset an active lockout — DEPRECATED unchecked variant.
+///
+/// Use [`request_force_reset`] instead. This function unconditionally
+/// clears the lockout, which means a tilted trader who calls the
+/// Tauri IPC from DevTools console (`invoke('lockout_reset')`)
+/// trivially bypasses the entire lockout feature. The architect-
+/// review 2026-05-12 flagged this as the lockout feature literally
+/// not locking anyone out.
+///
+/// Retained for compatibility with existing tests + the
+/// `lockout_reset` Tauri command which now routes through
+/// [`request_force_reset`]. New callers MUST use that.
 pub fn force_reset(state: &mut LockoutState) {
     state.locked_until_unix = None;
     state.lock_reason = None;
+    state.armed_for_reset_until = None;
     save(state);
+}
+
+/// Arm a 5-minute window during which `request_force_reset` will
+/// actually clear the lockout. Calling this starts the timer; the
+/// user must wait through it before the reset is honored. A tilted
+/// trader who calls `arm_force_reset` impulsively must then sit
+/// idle for 5 minutes before they can complete the bypass — that
+/// pause is the discipline.
+pub fn arm_force_reset(state: &mut LockoutState) {
+    state.armed_for_reset_until = Some(now_unix() + 5 * 60);
+    save(state);
+}
+
+/// Check whether the reset is armed AND the 5-minute window has
+/// already elapsed. If yes, force-reset; otherwise return an
+/// instructive error including the seconds remaining. The pure-
+/// function return value lets the UI render a countdown without
+/// re-querying.
+pub fn request_force_reset(state: &mut LockoutState) -> Result<(), String> {
+    match state.armed_for_reset_until {
+        None => Err(
+            "Reset not armed. Call arm_force_reset and wait 5 minutes before requesting reset."
+                .to_string(),
+        ),
+        Some(t) => {
+            let now = now_unix();
+            if now < t {
+                Err(format!(
+                    "Reset armed but cooldown active. {} seconds remaining.",
+                    t - now
+                ))
+            } else {
+                force_reset(state);
+                Ok(())
+            }
+        }
+    }
 }
 
 /// Record a loss event. Updates running counters and checks whether a
