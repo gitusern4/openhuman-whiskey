@@ -897,6 +897,28 @@ fn get_active_whiskey_mode_id() -> String {
         .to_string()
 }
 
+/// Whiskey fork — first-run onboarding status.
+/// Returns `{ completed, tv_bridge_skipped, current_step }`.
+#[tauri::command]
+fn onboarding_status() -> openhuman_core::openhuman::modes::onboarding::OnboardingStatus {
+    openhuman_core::openhuman::modes::onboarding::status()
+}
+
+/// Whiskey fork — mark a wizard step as reached (but not yet finished).
+/// `tv_bridge_skipped` tracks whether the user skipped step 2.
+#[tauri::command]
+fn onboarding_advance(step: u32, tv_bridge_skipped: bool) {
+    openhuman_core::openhuman::modes::onboarding::advance(step, tv_bridge_skipped);
+}
+
+/// Whiskey fork — mark the onboarding wizard as completed so it never
+/// auto-reopens. Sets `whiskey.onboarding.completed = true` in the
+/// persisted `onboarding.toml` file.
+#[tauri::command]
+fn onboarding_complete(tv_bridge_skipped: bool) {
+    openhuman_core::openhuman::modes::onboarding::complete(tv_bridge_skipped);
+}
+
 /// Whiskey fork: persist the mascot's current position. Called from
 /// the React mascot frontend after the user drags the window so the
 /// next launch lands in the same spot. Windows-only today; macOS uses
@@ -2071,6 +2093,10 @@ pub fn run() {
             list_whiskey_modes,
             set_whiskey_mode,
             get_active_whiskey_mode_id,
+            // Whiskey fork — first-run onboarding wizard.
+            onboarding_status,
+            onboarding_advance,
+            onboarding_complete,
             // Whiskey fork — TradingView Desktop CDP bridge.
             // See `tradingview_cdp.rs` for the full setup story; in
             // short, the user must launch TV Desktop with

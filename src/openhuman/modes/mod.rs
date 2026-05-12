@@ -36,6 +36,7 @@
 
 pub mod default;
 pub mod memory_cache;
+pub mod onboarding;
 pub mod persistence;
 pub mod registry;
 pub mod whiskey;

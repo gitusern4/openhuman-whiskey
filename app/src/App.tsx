@@ -7,6 +7,10 @@ import { PersistGate } from 'redux-persist/integration/react';
 import AppRoutes from './AppRoutes';
 import AppUpdatePrompt from './components/AppUpdatePrompt';
 import BootCheckGate from './components/BootCheckGate/BootCheckGate';
+// Whiskey fork — first-run onboarding wizard. Rendered as a sibling overlay
+// inside AppShell (inside the Router) so it can call useNavigate. The wizard
+// is invisible once onboarding_status.completed = true.
+import OnboardingWizard from './components/onboarding/OnboardingWizard';
 import BottomTabBar from './components/BottomTabBar';
 import CommandProvider from './components/commands/CommandProvider';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
@@ -190,6 +194,11 @@ function AppShell() {
       {!isBootstrapping && !onOnboardingRoute && (
         <AppWalkthrough onboarded={!!snapshot.onboardingCompleted} />
       )}
+      {/* Whiskey fork — first-run onboarding wizard overlay. Mounted outside
+          the route tree so it survives route transitions during the wizard.
+          OnboardingWizard self-suppresses when onboarding_status.completed=true,
+          so this is a no-op on every launch after the first. */}
+      <OnboardingWizard />
     </div>
   );
 }
