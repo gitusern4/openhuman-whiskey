@@ -37,6 +37,7 @@ mod process_recovery;
 mod screen_capture;
 mod slack_scanner;
 mod telegram_scanner;
+mod tradingview_cdp;
 mod webview_accounts;
 mod webview_apis;
 mod whatsapp_scanner;
@@ -1521,6 +1522,10 @@ pub fn run() {
     let builder = builder.manage(meet_call::MeetCallState::new());
     let builder = builder.manage(meet_audio::MeetAudioState::new());
     let builder = builder.manage(meet_video::frame_bus::MeetVideoFrameBusState::new());
+    // TradingView Desktop CDP bridge — see `tradingview_cdp.rs`. State
+    // is `Option<TvCdpSession>` so attach is idempotent and we don't
+    // hold a live WebSocket until the user explicitly attaches.
+    let builder = builder.manage(tradingview_cdp::TvCdpState::default());
     builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
@@ -2066,6 +2071,16 @@ pub fn run() {
             list_whiskey_modes,
             set_whiskey_mode,
             get_active_whiskey_mode_id,
+            // Whiskey fork — TradingView Desktop CDP bridge.
+            // See `tradingview_cdp.rs` for the full setup story; in
+            // short, the user must launch TV Desktop with
+            // `--remote-debugging-port=9222` for these commands to
+            // resolve any targets.
+            tradingview_cdp::tv_cdp_probe,
+            tradingview_cdp::tv_cdp_attach,
+            tradingview_cdp::tv_cdp_eval,
+            tradingview_cdp::tv_cdp_get_chart_state,
+            tradingview_cdp::tv_cdp_detach,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
             meet_call::meet_call_open_window,
