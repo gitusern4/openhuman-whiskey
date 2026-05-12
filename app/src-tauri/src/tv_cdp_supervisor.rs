@@ -673,8 +673,14 @@ pub mod tests {
         let retry_count = Arc::new(AtomicU32::new(0));
         let cancel = Arc::new(AtomicBool::new(true)); // pre-set
         let result = reconnect_with_backoff(9222, 5, &retry_count, &cancel).await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "cancelled");
+        // Use match instead of unwrap_err — the Ok variant contains
+        // CdpConn which doesn't impl Debug, so unwrap_err fails to
+        // compile. (CdpConn intentionally lacks Debug because its
+        // internals — the WebSocket sink/stream — don't either.)
+        match result {
+            Err(msg) => assert_eq!(msg, "cancelled"),
+            Ok(_) => panic!("expected Err(cancelled), got Ok"),
+        }
     }
 
     // -----------------------------------------------------------------------
