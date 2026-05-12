@@ -909,12 +909,7 @@ fn compute_position_size(
     spec_id: String,
 ) -> openhuman_core::openhuman::modes::position_sizer::SizingResult {
     let spec = openhuman_core::openhuman::modes::position_sizer::spec_by_id(&spec_id);
-    openhuman_core::openhuman::modes::position_sizer::size_position(
-        entry,
-        stop,
-        risk_dollars,
-        spec,
-    )
+    openhuman_core::openhuman::modes::position_sizer::size_position(entry, stop, risk_dollars, spec)
 }
 
 /// TK's Mods — read the current walk-away lockout status.
