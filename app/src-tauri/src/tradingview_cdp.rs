@@ -372,6 +372,9 @@ const JS_GET_CHART_STATE: &str = r#"
 /// the value is safely JSON-encoded (handles quotes, backslashes, and
 /// non-ASCII). Substitution at the Rust layer rather than the JS layer
 /// means the LLM-provided symbol string never reaches V8 unescaped.
+/// Public re-export for `tv_overlay` dispatch.
+pub(crate) const JS_SET_SYMBOL_SNIPPET: &str = JS_SET_SYMBOL;
+
 const JS_SET_SYMBOL: &str = r#"
 (() => {
   try {
@@ -744,6 +747,9 @@ pub async fn tv_cdp_detach(state: tauri::State<'_, TvCdpState>) -> Result<(), St
 /// it by mistake. Time is set to `Date.now() / 1000` which TV uses only
 /// to place the shape on the correct bar when first drawn; for horizontals
 /// the time value has no visible effect after creation.
+/// Public re-export for `tv_overlay` dispatch.
+pub(crate) const JS_DRAW_SLTP_SNIPPET: &str = JS_DRAW_SLTP;
+
 const JS_DRAW_SLTP: &str = r#"
 (() => {
   try {
@@ -804,6 +810,9 @@ const JS_DRAW_SLTP: &str = r#"
 /// the `whiskey-sltp-` prefix. Uses `getAllShapes()` to enumerate then
 /// `removeEntity()` per shape id. Defensive: silently skips any shape
 /// whose removal fails (TV may have already removed it on chart switch).
+/// Public re-export for `tv_overlay` dispatch.
+pub(crate) const JS_CLEAR_SLTP_SNIPPET: &str = JS_CLEAR_SLTP;
+
 const JS_CLEAR_SLTP: &str = r#"
 (() => {
   try {

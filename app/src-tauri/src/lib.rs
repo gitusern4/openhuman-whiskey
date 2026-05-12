@@ -38,6 +38,7 @@ mod screen_capture;
 mod slack_scanner;
 mod telegram_scanner;
 mod tradingview_cdp;
+mod tv_overlay;
 mod webview_accounts;
 mod webview_apis;
 mod whatsapp_scanner;
@@ -1582,6 +1583,7 @@ pub fn run() {
     // is `Option<TvCdpSession>` so attach is idempotent and we don't
     // hold a live WebSocket until the user explicitly attaches.
     let builder = builder.manage(tradingview_cdp::TvCdpState::default());
+    let builder = builder.manage(tv_overlay::TvOverlayState::default());
     builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
@@ -2142,6 +2144,11 @@ pub fn run() {
             // TK's Mods — SL/TP overlay commands.
             tradingview_cdp::tv_cdp_draw_sltp,
             tradingview_cdp::tv_cdp_clear_sltp,
+            // TK's Mods — TV overlay panel (injected into TV's renderer via CDP).
+            tv_overlay::tv_overlay_inject,
+            tv_overlay::tv_overlay_remove,
+            tv_overlay::tv_overlay_send_state,
+            tv_overlay::tv_overlay_drain_outbox,
             // TK's Mods — position sizer + walk-away lockout.
             compute_position_size,
             lockout_status,
