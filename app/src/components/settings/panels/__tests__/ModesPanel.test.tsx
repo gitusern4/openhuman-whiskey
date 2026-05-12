@@ -40,11 +40,16 @@ const FIXTURE_MODES = [
   },
 ];
 
+const FIXTURE_DEFAULT_HOTKEY = 'CmdOrCtrl+Shift+Space';
+
 function setupHappyPath(activeId = 'default') {
   mockInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'list_whiskey_modes') return FIXTURE_MODES;
     if (cmd === 'get_active_whiskey_mode_id') return activeId;
     if (cmd === 'set_whiskey_mode') return undefined;
+    if (cmd === 'get_mascot_summon_hotkey') return FIXTURE_DEFAULT_HOTKEY;
+    if (cmd === 'register_mascot_summon_hotkey') return undefined;
+    if (cmd === 'unregister_mascot_summon_hotkey') return undefined;
     throw new Error(`unexpected invoke: ${cmd}`);
   });
 }
@@ -112,6 +117,7 @@ describe('ModesPanel', () => {
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_whiskey_modes') throw new Error('rpc down');
       if (cmd === 'get_active_whiskey_mode_id') return 'default';
+      if (cmd === 'get_mascot_summon_hotkey') return FIXTURE_DEFAULT_HOTKEY;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
 
@@ -134,6 +140,7 @@ describe('ModesPanel', () => {
       if (cmd === 'set_whiskey_mode') {
         throw new Error('unknown id');
       }
+      if (cmd === 'get_mascot_summon_hotkey') return FIXTURE_DEFAULT_HOTKEY;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
 
@@ -165,5 +172,76 @@ describe('ModesPanel', () => {
     await Promise.resolve();
 
     expect(mockInvoke).not.toHaveBeenCalledWith('set_whiskey_mode', expect.anything());
+  });
+
+  // --- Mascot summon hotkey card -------------------------------------------
+  it('renders the mascot summon hotkey card with the loaded value', async () => {
+    setupHappyPath();
+    render(<ModesPanel />);
+
+    const card = await screen.findByTestId('mascot-summon-hotkey-card');
+    expect(card).toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('mascot-summon-hotkey-current')).toHaveTextContent(
+        FIXTURE_DEFAULT_HOTKEY
+      )
+    );
+
+    const input = screen.getByTestId('mascot-summon-hotkey-input') as HTMLInputElement;
+    expect(input.value).toBe(FIXTURE_DEFAULT_HOTKEY);
+  });
+
+  it('invokes register_mascot_summon_hotkey with the entered shortcut on Save', async () => {
+    setupHappyPath();
+    render(<ModesPanel />);
+
+    const input = (await screen.findByTestId('mascot-summon-hotkey-input')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(FIXTURE_DEFAULT_HOTKEY));
+
+    fireEvent.change(input, { target: { value: 'CmdOrCtrl+Alt+M' } });
+    fireEvent.click(screen.getByTestId('mascot-summon-hotkey-save'));
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('register_mascot_summon_hotkey', {
+        shortcut: 'CmdOrCtrl+Alt+M',
+      })
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId('mascot-summon-hotkey-current')).toHaveTextContent(
+        'CmdOrCtrl+Alt+M'
+      )
+    );
+  });
+
+  it('surfaces a register_mascot_summon_hotkey error in the alert box', async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_whiskey_modes') return FIXTURE_MODES;
+      if (cmd === 'get_active_whiskey_mode_id') return 'default';
+      if (cmd === 'get_mascot_summon_hotkey') return FIXTURE_DEFAULT_HOTKEY;
+      if (cmd === 'register_mascot_summon_hotkey') {
+        throw new Error('shortcut already in use');
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    render(<ModesPanel />);
+
+    const input = (await screen.findByTestId('mascot-summon-hotkey-input')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(FIXTURE_DEFAULT_HOTKEY));
+
+    fireEvent.change(input, { target: { value: 'CmdOrCtrl+Alt+J' } });
+    fireEvent.click(screen.getByTestId('mascot-summon-hotkey-save'));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/Could not register mascot summon hotkey/);
+    expect(alert).toHaveTextContent(/shortcut already in use/);
+
+    // The "currently registered" label should still show the original
+    // value — we only flip it on success.
+    expect(screen.getByTestId('mascot-summon-hotkey-current')).toHaveTextContent(
+      FIXTURE_DEFAULT_HOTKEY
+    );
   });
 });

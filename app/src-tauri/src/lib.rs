@@ -751,6 +751,32 @@ async fn register_dictation_hotkey(
     Ok(())
 }
 
+/// Register (or re-register) the global mascot-summon hotkey. Mirrors
+/// `register_dictation_hotkey` — see `mascot_summon_hotkey::register`
+/// for the rollback-on-failure semantics.
+#[tauri::command]
+async fn register_mascot_summon_hotkey(
+    app: AppHandle<AppRuntime>,
+    shortcut: String,
+) -> Result<(), String> {
+    mascot_summon_hotkey::register(app, shortcut).await
+}
+
+/// Unregister the global mascot-summon hotkey (if any).
+#[tauri::command]
+async fn unregister_mascot_summon_hotkey(app: AppHandle<AppRuntime>) -> Result<(), String> {
+    mascot_summon_hotkey::unregister_all(app).await
+}
+
+/// Read-only accessor for the project's default mascot-summon binding
+/// string. v1 always returns the compile-time default; a future
+/// revision can thread the live state in if user-side persistence
+/// lands.
+#[tauri::command]
+fn get_mascot_summon_hotkey() -> String {
+    mascot_summon_hotkey::DEFAULT_MASCOT_SUMMON_BINDING.to_string()
+}
+
 /// Unregister the global dictation hotkey (if any).
 #[tauri::command]
 async fn unregister_dictation_hotkey(app: AppHandle<AppRuntime>) -> Result<(), String> {
@@ -1477,6 +1503,9 @@ pub fn run() {
         .manage(dictation_hotkeys::DictationHotkeyState(
             std::sync::Mutex::new(Vec::new()),
         ))
+        .manage(mascot_summon_hotkey::MascotSummonHotkeyState(
+            std::sync::Mutex::new(Vec::new()),
+        ))
         .manage(webview_accounts::WebviewAccountsState::default())
         .manage(notification_settings::NotificationSettingsState::new())
         .manage(PendingAppUpdateState::default());
@@ -2003,6 +2032,9 @@ pub fn run() {
             schedule_cef_profile_purge,
             register_dictation_hotkey,
             unregister_dictation_hotkey,
+            register_mascot_summon_hotkey,
+            unregister_mascot_summon_hotkey,
+            get_mascot_summon_hotkey,
             webview_accounts::webview_account_open,
             webview_accounts::webview_account_prewarm,
             webview_accounts::webview_account_close,

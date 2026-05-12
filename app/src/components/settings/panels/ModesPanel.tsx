@@ -36,6 +36,13 @@ const ModesPanel = () => {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Mascot summon hotkey card state. v1 is a plain text input — a
+  // Raycast-style key recorder is Phase 2 and lives in its own
+  // component (HotkeyRecorder.tsx) per the project plan.
+  const [hotkeyCurrent, setHotkeyCurrent] = useState<string | null>(null);
+  const [hotkeyDraft, setHotkeyDraft] = useState<string>('');
+  const [hotkeyPending, setHotkeyPending] = useState(false);
+
   /**
    * Pull the registered modes + active id in parallel. Both calls hit
    * the in-memory registry in the core process, so they're effectively
@@ -59,6 +66,59 @@ const ModesPanel = () => {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const refreshHotkey = useCallback(async () => {
+    try {
+      const current = await invoke<string>('get_mascot_summon_hotkey');
+      setHotkeyCurrent(current);
+      setHotkeyDraft(current);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Failed to load mascot summon hotkey: ${msg}`);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshHotkey();
+  }, [refreshHotkey]);
+
+  const saveHotkey = useCallback(async () => {
+    if (hotkeyPending) return;
+    const next = hotkeyDraft.trim();
+    if (next.length === 0) {
+      setError('Mascot summon hotkey cannot be empty.');
+      return;
+    }
+    setHotkeyPending(true);
+    setError(null);
+    try {
+      await invoke('register_mascot_summon_hotkey', { shortcut: next });
+      setHotkeyCurrent(next);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Could not register mascot summon hotkey: ${msg}`);
+    } finally {
+      setHotkeyPending(false);
+    }
+  }, [hotkeyDraft, hotkeyPending]);
+
+  const resetHotkey = useCallback(async () => {
+    if (hotkeyPending) return;
+    setHotkeyPending(true);
+    setError(null);
+    try {
+      await invoke('unregister_mascot_summon_hotkey');
+      const fallback = await invoke<string>('get_mascot_summon_hotkey');
+      await invoke('register_mascot_summon_hotkey', { shortcut: fallback });
+      setHotkeyCurrent(fallback);
+      setHotkeyDraft(fallback);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Could not reset mascot summon hotkey: ${msg}`);
+    } finally {
+      setHotkeyPending(false);
+    }
+  }, [hotkeyPending]);
 
   const switchTo = useCallback(
     async (id: string) => {
@@ -146,6 +206,50 @@ const ModesPanel = () => {
             </button>
           );
         })}
+
+        <div
+          className="rounded-xl border border-stone-200 bg-white p-4"
+          data-testid="mascot-summon-hotkey-card">
+          <div className="text-sm font-medium text-stone-900">Summon hotkey</div>
+          <p className="mt-1 text-xs text-stone-500 leading-relaxed">
+            Global shortcut that toggles the floating mascot from anywhere. Use the project&apos;s{' '}
+            <code className="text-[11px]">CmdOrCtrl</code> convention to bind the same chord on
+            macOS and Windows (e.g. <code className="text-[11px]">CmdOrCtrl+Shift+Space</code>).
+          </p>
+          <div className="mt-2 text-[11px] text-stone-400">
+            Currently registered:{' '}
+            <span className="text-stone-600" data-testid="mascot-summon-hotkey-current">
+              {hotkeyCurrent ?? '…'}
+            </span>
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <input
+              type="text"
+              value={hotkeyDraft}
+              onChange={e => setHotkeyDraft(e.target.value)}
+              disabled={hotkeyPending}
+              placeholder="CmdOrCtrl+Shift+Space"
+              data-testid="mascot-summon-hotkey-input"
+              className="flex-1 rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50 disabled:text-stone-400"
+            />
+            <button
+              type="button"
+              onClick={() => void saveHotkey()}
+              disabled={hotkeyPending || hotkeyDraft.trim().length === 0}
+              data-testid="mascot-summon-hotkey-save"
+              className="shrink-0 rounded-md bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:bg-stone-300 disabled:cursor-not-allowed">
+              {hotkeyPending ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void resetHotkey()}
+              disabled={hotkeyPending}
+              data-testid="mascot-summon-hotkey-reset"
+              className="shrink-0 rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400">
+              Reset
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
