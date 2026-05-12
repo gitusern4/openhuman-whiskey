@@ -66,7 +66,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 /// TradingView page. TV Desktop loads `https://www.tradingview.com/...`
 /// in its renderer, so substring match is sufficient and survives URL
 /// rewrites between TV releases.
-const TV_URL_MARKER: &str = "tradingview.com";
+pub(crate) const TV_URL_MARKER: &str = "tradingview.com";
 
 /// One attached session to a TradingView Desktop page.
 ///
@@ -714,12 +714,25 @@ fn find_tv_exe_windows() -> Option<std::path::PathBuf> {
 
 /// Detach the session (if any) and drop the underlying WebSocket.
 /// Idempotent — calling `detach` with no live session is a no-op.
+///
+/// Also records the detach timestamp in the supervisor state so the
+/// auto-reattach loop is suppressed for 30 s after a user-initiated detach.
+/// The `sup_state` parameter is Tauri-injected (not caller-supplied), so
+/// the frontend `invoke('tv_cdp_detach')` call is unchanged.
 #[tauri::command]
-pub async fn tv_cdp_detach(state: tauri::State<'_, TvCdpState>) -> Result<(), String> {
-    let mut guard = state.0.lock().await;
-    if let Some(mut old) = guard.take() {
-        let _ = crate::cdp::detach_session(&mut old.conn, &old.session_id).await;
+pub async fn tv_cdp_detach(
+    state: tauri::State<'_, TvCdpState>,
+    sup_state: tauri::State<'_, std::sync::Arc<crate::tv_cdp_supervisor::TvAutoAttachState>>,
+) -> Result<(), String> {
+    {
+        let mut guard = state.0.lock().await;
+        if let Some(mut old) = guard.take() {
+            let _ = crate::cdp::detach_session(&mut old.conn, &old.session_id).await;
+        }
     }
+    // Tell the supervisor about the manual detach so it waits 30 s before
+    // auto-reattaching. This is a no-op when the supervisor is not running.
+    crate::tv_cdp_supervisor::record_manual_detach(&sup_state);
     Ok(())
 }
 
@@ -933,6 +946,22 @@ fn pick_first_tv_target(v: &Value) -> Option<CdpTarget> {
             }
         })
         .next()
+}
+
+// ---------------------------------------------------------------------------
+// pub(crate) shims used by tv_cdp_supervisor
+// ---------------------------------------------------------------------------
+
+/// Expose `discover_browser_ws` to the supervisor without changing the
+/// existing private function signature.
+pub(crate) async fn discover_browser_ws_pub(port: u16) -> Result<String, String> {
+    discover_browser_ws(port).await
+}
+
+/// Expose `pick_first_tv_target` to the supervisor for use in
+/// the reconnect path.
+pub(crate) fn pick_first_tv_target_pub(v: &Value) -> Option<CdpTarget> {
+    pick_first_tv_target(v)
 }
 
 #[cfg(test)]

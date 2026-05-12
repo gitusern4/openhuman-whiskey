@@ -38,6 +38,7 @@ mod screen_capture;
 mod slack_scanner;
 mod telegram_scanner;
 mod tradingview_cdp;
+mod tv_cdp_supervisor;
 mod webview_accounts;
 mod webview_apis;
 mod whatsapp_scanner;
@@ -1604,6 +1605,11 @@ pub fn run() {
     // is `Option<TvCdpSession>` so attach is idempotent and we don't
     // hold a live WebSocket until the user explicitly attaches.
     let builder = builder.manage(tradingview_cdp::TvCdpState::default());
+    // CDP auto-attach supervisor state — Arc so the supervisor task can
+    // hold a reference across the lifetime of the Tauri-managed state.
+    let builder = builder.manage(std::sync::Arc::new(
+        tv_cdp_supervisor::TvAutoAttachState::default(),
+    ));
     builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
@@ -2165,6 +2171,9 @@ pub fn run() {
             tradingview_cdp::tv_cdp_set_symbol,
             tradingview_cdp::tv_cdp_launch_tv,
             tradingview_cdp::tv_cdp_detach,
+            // CDP auto-attach supervisor — enable/disable + status poll.
+            tv_cdp_supervisor::tv_cdp_set_auto_attach,
+            tv_cdp_supervisor::tv_cdp_get_auto_attach_status,
             // TK's Mods — SL/TP overlay commands.
             tradingview_cdp::tv_cdp_draw_sltp,
             tradingview_cdp::tv_cdp_clear_sltp,
