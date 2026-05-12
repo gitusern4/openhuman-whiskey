@@ -136,8 +136,8 @@ fn fresh_overlay_nonce() -> String {
         .unwrap_or(0);
     let pid = std::process::id() as u64;
     let ctr = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let mixed: u128 =
-        ((nanos as u128) ^ ((pid as u128) << 64)) ^ ((ctr as u128).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    let mixed: u128 = ((nanos as u128) ^ ((pid as u128) << 64))
+        ^ ((ctr as u128).wrapping_mul(0x9E37_79B9_7F4A_7C15));
     format!("{:032x}", mixed)
 }
 
@@ -180,10 +180,7 @@ const JS_REMOVE_OVERLAY: &str = r#"
 // Internal CDP eval helper (works against a raw session, not Tauri state)
 // ---------------------------------------------------------------------------
 
-async fn cdp_eval_raw(
-    session: &mut TvCdpSession,
-    expression: &str,
-) -> Result<Value, String> {
+async fn cdp_eval_raw(session: &mut TvCdpSession, expression: &str) -> Result<Value, String> {
     let result = session
         .conn
         .call(
@@ -383,7 +380,9 @@ pub async fn tv_overlay_drain_outbox(
         .ok_or_else(|| "Not attached to TV.".to_string())?;
     let raw = cdp_eval_raw(session, JS_DRAIN_OUTBOX).await?;
     let all = match &raw {
-        Value::String(s) => serde_json::from_str::<Vec<OverlayCommand>>(s).map_err(|e| e.to_string())?,
+        Value::String(s) => {
+            serde_json::from_str::<Vec<OverlayCommand>>(s).map_err(|e| e.to_string())?
+        }
         _ => Vec::new(),
     };
     Ok(filter_by_nonce(all, expected_nonce.as_deref()))

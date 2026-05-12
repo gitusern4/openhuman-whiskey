@@ -165,17 +165,22 @@ pub async fn kill_switch_trigger(
     let reason_str = reason.as_deref().unwrap_or("manual");
 
     // Resolve client — kill proceeds even if broker is disconnected (state file still engaged).
-    let client_guard = client_state
-        .0
-        .lock()
-        .map_err(|_| "client state lock poisoned".to_string())?;
+    // CLONE the client out of the lock and DROP the guard before any await — std::sync::MutexGuard
+    // is not Send, so holding it across .await would make the future non-Send and Tauri rejects.
+    let client_opt: Option<TopStepClient> = {
+        let guard = client_state
+            .0
+            .lock()
+            .map_err(|_| "client state lock poisoned".to_string())?;
+        guard.as_ref().cloned()
+    };
 
     // Engage the kill state on disk immediately before any network calls.
     // We parse the KillTrigger from the string for audit purposes.
     let trigger = openhuman_core::openhuman::modes::kill_switch::KillTrigger::ManualButton;
 
     // If we have a live client, run the full sequence (cancel + flatten + revoke).
-    if let Some(client) = client_guard.as_ref() {
+    if let Some(client) = client_opt.as_ref() {
         let mut audit = open_audit(openhuman_dir)?;
         // account_id 0 is used as a placeholder when not available from state.
         // In production the account_id would come from TopStepClientState or a separate managed state.
@@ -537,14 +542,19 @@ pub async fn confirm_bracket_order(
         .record(&confirm_entry)
         .map_err(|e| format!("audit error: {}", e))?;
 
-    // Gate 6: broker call — client must be connected.
-    let client_guard = client_state
-        .0
-        .lock()
-        .map_err(|_| "client state lock poisoned".to_string())?;
-    let client = client_guard
-        .as_ref()
-        .ok_or_else(|| "broker_not_connected: call topstepx_authenticate first".to_string())?;
+    // Gate 6: broker call — client must be connected. Clone OUT of the
+    // lock so std::sync::MutexGuard doesn't cross the broker .await
+    // (which would make the future non-Send and Tauri rejects).
+    let client: TopStepClient = {
+        let guard = client_state
+            .0
+            .lock()
+            .map_err(|_| "client state lock poisoned".to_string())?;
+        guard
+            .as_ref()
+            .ok_or_else(|| "broker_not_connected: call topstepx_authenticate first".to_string())?
+            .clone()
+    };
 
     let bracket = BracketOrder {
         account_id,
@@ -561,7 +571,7 @@ pub async fn confirm_bracket_order(
         take_profit_bracket: stored.take_profit_ticks,
     };
 
-    let broker_result = place_bracket_order(client, &bracket).await;
+    let broker_result = place_bracket_order(&client, &bracket).await;
 
     // Gate 7: post-send audit (Send action with broker response).
     let (send_action, order_id_str, broker_json) = match &broker_result {
