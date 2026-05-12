@@ -24,6 +24,7 @@ mod mascot_summon_hotkey;
 // Whiskey fork — Windows mascot path. Parallel to mascot_native_window
 // (which is macOS-only). Both are gated on their target_os; lib.rs
 // dispatches via #[cfg] branches inside mascot_window_show / hide.
+mod execution_commands;
 #[cfg(target_os = "windows")]
 mod mascot_windows_state;
 #[cfg(target_os = "windows")]
@@ -1642,6 +1643,18 @@ pub fn run() {
     // In-TV overlay panel state — holds the injection lifecycle + the
     // outbox-poll background task. See `tv_overlay.rs`.
     let builder = builder.manage(tv_overlay::TvOverlayState::default());
+    // Whiskey execution layer — openhuman_dir, broker client, proposal store.
+    let openhuman_dir =
+        cef_profile::default_root_openhuman_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let builder = builder.manage(execution_commands::OpenhumanDir(std::sync::Arc::new(
+        openhuman_dir,
+    )));
+    let builder = builder.manage(execution_commands::TopStepClientState(std::sync::Arc::new(
+        std::sync::Mutex::new(None),
+    )));
+    let builder = builder.manage(execution_commands::ProposalStore(std::sync::Arc::new(
+        std::sync::Mutex::new(std::collections::HashMap::new()),
+    )));
     builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
@@ -2230,6 +2243,15 @@ pub fn run() {
             order_flow_commands::order_flow_record_bar,
             order_flow_commands::order_flow_tag_active_trade,
             order_flow_commands::order_flow_apply_preset,
+            // Whiskey execution layer commands (Steps 5, 7, 8, 9, 10).
+            execution_commands::kill_switch_trigger,
+            execution_commands::kill_switch_status,
+            execution_commands::kill_switch_request_reset,
+            execution_commands::submit_bracket_order,
+            execution_commands::confirm_bracket_order,
+            execution_commands::topstepx_authenticate,
+            execution_commands::whiskey_session_state,
+            execution_commands::whiskey_propose_trade,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
             meet_call::meet_call_open_window,

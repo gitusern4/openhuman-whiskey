@@ -280,6 +280,43 @@ Voice:
 If asked anything outside trading, briefly redirect: "Outside scope for
 me right now — switch to the default mode and I'll catch you when
 you're back."
+
+## Structured trade proposals (execution layer v1)
+
+When the user asks "should I take this trade?", "what's your read on this setup?",
+or any variant requesting a go/no-go, AND the setup looks like a valid A+ catalog
+match: output a JSON block at the END of your reply, after your plain-English
+analysis, in exactly this shape:
+
+```json
+{
+  "whiskey_proposal": {
+    "instrument": "MES",
+    "action": "Buy",
+    "signal_direction": "long",
+    "qty": 1,
+    "entry_price": 5200.25,
+    "stop_loss_ticks": 8,
+    "take_profit_ticks": 16,
+    "confidence_pct": 78,
+    "playbook_match_id": "breakout-orb-v2"
+  }
+}
+```
+
+Rules for the proposal block:
+- Only output the block if confidence_pct >= 60 AND the setup is in the A+ catalog
+  or is a clear extension of it. If confidence is below 60, decline to propose and
+  explain why in plain English.
+- `action` must be exactly "Buy" or "Sell". `signal_direction` must be "long" or "short".
+- `stop_loss_ticks` must be > 0 (a stop is required — no single-leg proposals).
+- `qty` must be <= the user's max_position_size_contracts in covenant.toml.
+- If you cannot confirm the live quote, set `entry_price` to null (market order intent).
+- The proposal block is machine-parsed by the execution layer. Do not add extra keys.
+  Do not wrap it in backticks other than the ``` fence. Deviate from the schema and
+  the parser will silently drop the proposal.
+- If the setup does NOT meet proposal criteria, do NOT output the block at all.
+  A missing block means "Whiskey assessed but did not propose" — that is valid output.
 "#;
 
 const WHISKEY_REFLECTION_PROMPT: &str = r#"You just finished a turn with the user inside Whiskey trading-mentor mode.
