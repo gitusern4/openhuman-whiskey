@@ -34,7 +34,12 @@ const ModesPanel = () => {
   const [modes, setModes] = useState<ModeDescriptor[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // WHISKEY_AUDIT.md M8: split the error state into mode + hotkey
+  // halves so a hotkey-save failure never clobbers a still-pending
+  // mode-switch error (or vice versa). Each card renders its own
+  // role="alert" region scoped to that state machine.
+  const [modeError, setModeError] = useState<string | null>(null);
+  const [hotkeyError, setHotkeyError] = useState<string | null>(null);
 
   // Mascot summon hotkey card state. v1 is a plain text input — a
   // Raycast-style key recorder is Phase 2 and lives in its own
@@ -49,7 +54,7 @@ const ModesPanel = () => {
    * instant — no spinner needed for happy-path renders.
    */
   const refresh = useCallback(async () => {
-    setError(null);
+    setModeError(null);
     try {
       const [list, active] = await Promise.all([
         invoke<ModeDescriptor[]>('list_whiskey_modes'),
@@ -59,7 +64,7 @@ const ModesPanel = () => {
       setActiveId(active);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(`Failed to load modes: ${msg}`);
+      setModeError(`Failed to load modes: ${msg}`);
     }
   }, []);
 
@@ -74,7 +79,7 @@ const ModesPanel = () => {
       setHotkeyDraft(current);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(`Failed to load mascot summon hotkey: ${msg}`);
+      setHotkeyError(`Failed to load mascot summon hotkey: ${msg}`);
     }
   }, []);
 
@@ -86,17 +91,17 @@ const ModesPanel = () => {
     if (hotkeyPending) return;
     const next = hotkeyDraft.trim();
     if (next.length === 0) {
-      setError('Mascot summon hotkey cannot be empty.');
+      setHotkeyError('Mascot summon hotkey cannot be empty.');
       return;
     }
     setHotkeyPending(true);
-    setError(null);
+    setHotkeyError(null);
     try {
       await invoke('register_mascot_summon_hotkey', { shortcut: next });
       setHotkeyCurrent(next);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(`Could not register mascot summon hotkey: ${msg}`);
+      setHotkeyError(`Could not register mascot summon hotkey: ${msg}`);
     } finally {
       setHotkeyPending(false);
     }
@@ -105,7 +110,7 @@ const ModesPanel = () => {
   const resetHotkey = useCallback(async () => {
     if (hotkeyPending) return;
     setHotkeyPending(true);
-    setError(null);
+    setHotkeyError(null);
     try {
       await invoke('unregister_mascot_summon_hotkey');
       const fallback = await invoke<string>('get_mascot_summon_hotkey');
@@ -114,7 +119,7 @@ const ModesPanel = () => {
       setHotkeyDraft(fallback);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(`Could not reset mascot summon hotkey: ${msg}`);
+      setHotkeyError(`Could not reset mascot summon hotkey: ${msg}`);
     } finally {
       setHotkeyPending(false);
     }
@@ -124,13 +129,13 @@ const ModesPanel = () => {
     async (id: string) => {
       if (id === activeId || pending) return;
       setPending(true);
-      setError(null);
+      setModeError(null);
       try {
         await invoke('set_whiskey_mode', { id });
         setActiveId(id);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setError(`Could not switch to mode "${id}": ${msg}`);
+        setModeError(`Could not switch to mode "${id}": ${msg}`);
       } finally {
         setPending(false);
       }
@@ -157,15 +162,16 @@ const ModesPanel = () => {
           </p>
         </div>
 
-        {error && (
+        {modeError && (
           <div
             role="alert"
+            data-testid="modes-error-alert"
             className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700">
-            {error}
+            {modeError}
           </div>
         )}
 
-        {modes.length === 0 && !error && (
+        {modes.length === 0 && !modeError && (
           <div className="rounded-xl border border-stone-200 bg-white p-4 text-xs text-stone-500">
             Loading modes…
           </div>
@@ -249,6 +255,21 @@ const ModesPanel = () => {
               Reset
             </button>
           </div>
+          {/*
+            WHISKEY_AUDIT.md M8: hotkey-scoped error alert. Lives
+            inside the hotkey card so a failed save/register doesn't
+            visually bleed up into the modes-list error region (and
+            vice versa — a failed mode switch can't clobber a still-
+            shown hotkey error).
+          */}
+          {hotkeyError && (
+            <div
+              role="alert"
+              data-testid="mascot-summon-hotkey-error"
+              className="mt-3 rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
+              {hotkeyError}
+            </div>
+          )}
         </div>
       </div>
     </div>
