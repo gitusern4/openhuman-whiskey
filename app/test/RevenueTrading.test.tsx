@@ -11,7 +11,7 @@
  *   - WalkAwayLockout visible with countdown when active
  */
 import { render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import DailyPnLGauge from '../src/components/settings/panels/DailyPnLGauge';
 import LossCounter from '../src/components/settings/panels/LossCounter';

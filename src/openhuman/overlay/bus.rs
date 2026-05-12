@@ -208,6 +208,11 @@ mod tests {
         let env_var = "OPENHUMAN_TKS_MODS_FILE";
         let old_val = std::env::var(env_var).ok();
         std::env::set_var(env_var, &config_path);
+        // The publish_attention cache (commit 61429b8d) is process-
+        // wide; an earlier test may have populated it from a different
+        // config file. Invalidate before we read so the new env-var
+        // path is honored on the lazy first read.
+        invalidate_tks_cache();
 
         let mut rx = subscribe_attention_events();
         let message = "entry at $100.00 with 2.5% account risk, 1.5R target";
@@ -225,5 +230,7 @@ mod tests {
         } else {
             std::env::remove_var(env_var);
         }
+        // Invalidate cache so the next test starts from a clean state.
+        invalidate_tks_cache();
     }
 }
