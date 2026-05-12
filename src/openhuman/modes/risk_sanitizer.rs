@@ -141,7 +141,10 @@ mod tests {
 
     #[test]
     fn pct_risk_suffix() {
-        assert_eq!(sanitize("this is a 1% risk setup"), "this is a position setup");
+        assert_eq!(
+            sanitize("this is a 1% risk setup"),
+            "this is a position setup"
+        );
     }
 
     #[test]

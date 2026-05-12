@@ -897,6 +897,67 @@ fn get_active_whiskey_mode_id() -> String {
         .to_string()
 }
 
+/// TK's Mods — compute position size from entry/stop/risk.
+/// `spec_id` maps to the baked-in spec names: "MNQ", "MES", "NQ",
+/// "ES", "MYM", "M2K", "CL", "GC", "STOCK". Unknown ids fall back to
+/// STOCK (1 dollar per 0.01-tick, generic equity assumption).
+#[tauri::command]
+fn compute_position_size(
+    entry: f64,
+    stop: f64,
+    risk_dollars: f64,
+    spec_id: String,
+) -> openhuman_core::openhuman::modes::position_sizer::SizingResult {
+    let spec = openhuman_core::openhuman::modes::position_sizer::spec_by_id(&spec_id);
+    openhuman_core::openhuman::modes::position_sizer::size_position(
+        entry,
+        stop,
+        risk_dollars,
+        spec,
+    )
+}
+
+/// TK's Mods — read the current walk-away lockout status.
+#[tauri::command]
+fn lockout_status() -> openhuman_core::openhuman::modes::lockout::LockoutStatus {
+    let state = openhuman_core::openhuman::modes::lockout::load();
+    openhuman_core::openhuman::modes::lockout::status(&state)
+}
+
+/// TK's Mods — manually trip the walk-away lockout.
+#[tauri::command]
+fn lockout_trip(reason: String) -> openhuman_core::openhuman::modes::lockout::LockoutStatus {
+    let mut state = openhuman_core::openhuman::modes::lockout::load();
+    openhuman_core::openhuman::modes::lockout::trip(&mut state, &reason);
+    openhuman_core::openhuman::modes::lockout::status(&state)
+}
+
+/// TK's Mods — force-reset an active lockout. The caller is expected
+/// to gate this behind an explicit `force_reset_armed` toggle in the UI
+/// so a misclick cannot trivially clear a live lockout.
+#[tauri::command]
+fn lockout_reset() -> openhuman_core::openhuman::modes::lockout::LockoutStatus {
+    let mut state = openhuman_core::openhuman::modes::lockout::load();
+    openhuman_core::openhuman::modes::lockout::force_reset(&mut state);
+    openhuman_core::openhuman::modes::lockout::status(&state)
+}
+
+/// TK's Mods — save updated lockout config (thresholds + cooldown).
+/// Does not trip or clear a lockout — only updates the thresholds.
+#[tauri::command]
+fn lockout_set_config(
+    max_daily_loss_dollars: Option<f64>,
+    max_consecutive_losses: Option<u32>,
+    cooldown_minutes: u32,
+) -> openhuman_core::openhuman::modes::lockout::LockoutStatus {
+    let mut state = openhuman_core::openhuman::modes::lockout::load();
+    state.config.max_daily_loss_dollars = max_daily_loss_dollars;
+    state.config.max_consecutive_losses = max_consecutive_losses;
+    state.config.cooldown_minutes = cooldown_minutes;
+    openhuman_core::openhuman::modes::lockout::save(&state);
+    openhuman_core::openhuman::modes::lockout::status(&state)
+}
+
 /// Whiskey fork: persist the mascot's current position. Called from
 /// the React mascot frontend after the user drags the window so the
 /// next launch lands in the same spot. Windows-only today; macOS uses
@@ -2086,6 +2147,12 @@ pub fn run() {
             // TK's Mods — SL/TP overlay commands.
             tradingview_cdp::tv_cdp_draw_sltp,
             tradingview_cdp::tv_cdp_clear_sltp,
+            // TK's Mods — position sizer + walk-away lockout.
+            compute_position_size,
+            lockout_status,
+            lockout_trip,
+            lockout_reset,
+            lockout_set_config,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
             meet_call::meet_call_open_window,

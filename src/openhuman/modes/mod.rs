@@ -35,8 +35,10 @@
 //!     same root list will feed both paths.
 
 pub mod default;
+pub mod lockout;
 pub mod memory_cache;
 pub mod persistence;
+pub mod position_sizer;
 pub mod registry;
 pub mod risk_sanitizer;
 pub mod tks_mods_config;

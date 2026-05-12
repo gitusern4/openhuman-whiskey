@@ -1,38 +1,37 @@
 /**
- * TK's Mods — settings panel.
+ * TK's Mods — consolidated trading settings hub.
  *
- * Home for three TK-specific customizations:
- *   1. Theme picker   — default (stone/sage) vs ZETH (black + neon green).
- *   2. SL/TP overlay  — draw stop-loss / take-profit horizontal lines on the
- *                        active TradingView chart via the CDP bridge.
- *   3. Hide risk %    — redact $ amounts and percentages from Whiskey messages.
+ * All trading mods and AI add-ons in one scrolling page.
+ * Sections (in order):
  *
- * Style conventions match TradingViewBridgePanel + ModesPanel:
+ *   1. AI Mode             — mode picker + mascot hotkey (ModesPanelBody)
+ *   2. TradingView bridge  — CDP probe/attach/state/symbol (TvBridgePanelBody)
+ *   3. SL/TP overlay       — draw stop/target horizontal lines on chart
+ *   4. Position size calc  — entry/stop/risk → contracts (compute_position_size)
+ *   5. Pre-trade checklist — editable checklist, confirm-setup gate
+ *   6. Symbol favorites    — quick-switch symbols via TV bridge
+ *   7. Walk-away lockout   — daily-loss / consecutive-loss trip + cooldown timer
+ *   8. Theme               — default vs ZETH
+ *   9. Risk-hide toggle    — $/% redaction in Whiskey messages
+ *
+ * Lockout banner renders at the TOP if currently locked.
+ *
+ * Style conventions match the rest of the settings panels:
  *   - rounded-xl border border-stone-200 bg-white p-4 cards
- *   - role="alert" + data-testid for the error region
  *   - primary-500 / primary-600 action buttons
- *
- * Under the ZETH theme the component picks up neon green accents through
- * CSS custom properties; no per-theme JSX branching needed.
- *
- * Wires to:
- *   - `useTheme` hook            — client-side CSS var switch (< 100ms)
- *   - `tv_cdp_draw_sltp`         — Tauri command (tradingview_cdp.rs)
- *   - `tv_cdp_clear_sltp`        — Tauri command (tradingview_cdp.rs)
- *   - localStorage `tk-hide-risk-pct`  — risk-hide toggle (frontend-only
- *     for now; the Rust sanitizer reads the TOML copy through the Tauri
- *     command `tks_mods_get_config` / `tks_mods_set_config` added in a
- *     follow-up pass — see implementation note below).
+ *   - role="alert" + data-testid for error regions
  */
 import { invoke } from '@tauri-apps/api/core';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { THEMES, useTheme } from '../../../hooks/useTheme';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import ModesPanelBody from './ModesPanelBody';
+import TvBridgePanelBody from './TvBridgePanelBody';
 
 // ---------------------------------------------------------------------------
-// Types
+// Types shared with Rust commands
 // ---------------------------------------------------------------------------
 
 interface TvSltpResult {
@@ -41,13 +40,54 @@ interface TvSltpResult {
   error: string | null;
 }
 
+interface SizingResult {
+  contracts: number;
+  actual_risk_dollars: number;
+  risk_per_contract: number;
+  error: string | null;
+}
+
+interface LockoutConfig {
+  max_daily_loss_dollars: number | null;
+  max_consecutive_losses: number | null;
+  cooldown_minutes: number;
+}
+
+interface LockoutStatus {
+  is_locked: boolean;
+  locked_until_unix: number | null;
+  lock_reason: string | null;
+  daily_loss_dollars: number;
+  consecutive_losses: number;
+  config: LockoutConfig;
+}
+
+interface ChecklistItem {
+  id: string;
+  label: string;
+}
+
 // ---------------------------------------------------------------------------
-// Risk-hide persistence (localStorage, frontend layer)
-// The Rust sanitizer reads the same flag via the TOML config written by
-// the Tauri `tks_mods_set_config` command.  For v1 we persist both sides
-// so the UI reflects the choice immediately without a round-trip.
+// Constants
 // ---------------------------------------------------------------------------
+
 const RISK_HIDE_KEY = 'tk-hide-risk-pct';
+const MAX_FAVORITES = 20;
+
+const SPEC_IDS = ['MNQ', 'MES', 'NQ', 'ES', 'MYM', 'M2K', 'CL', 'GC', 'STOCK'] as const;
+type SpecId = (typeof SPEC_IDS)[number];
+
+const DEFAULT_CHECKLIST: ChecklistItem[] = [
+  { id: 'catalog-match', label: 'Catalog match confirmed (A+ setup in playbook)' },
+  { id: 'stop-defined', label: 'Stop price defined' },
+  { id: 'size-calculated', label: 'Position size calculated' },
+  { id: 'risk-budget', label: 'Risk fits daily budget' },
+  { id: 'no-revenge', label: 'Not revenge trading (>15min since last loss)' },
+];
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function readRiskHide(): boolean {
   try {
@@ -57,14 +97,17 @@ function readRiskHide(): boolean {
   }
 }
 
-// ---------------------------------------------------------------------------
-// R-multiple helper
-// ---------------------------------------------------------------------------
 function rMultiple(entry: number, stop: number, target: number): string | null {
   const risk = Math.abs(entry - stop);
   const reward = Math.abs(target - entry);
   if (risk === 0) return null;
   return (reward / risk).toFixed(2) + 'R';
+}
+
+function formatLockoutUntil(unix: number | null): string {
+  if (unix === null) return '';
+  const d = new Date(unix * 1000);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +118,10 @@ const TksModsPanel = () => {
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const { theme, setTheme } = useTheme();
 
-  // SL/TP inputs
+  // TV bridge attached state (surfaced from TvBridgePanelBody via callback)
+  const [tvAttached, setTvAttached] = useState(false);
+
+  // ── SL/TP overlay ─────────────────────────────────────────────────────────
   const [entry, setEntry] = useState('');
   const [stop, setStop] = useState('');
   const [target, setTarget] = useState('');
@@ -83,10 +129,6 @@ const TksModsPanel = () => {
   const [sltpError, setSltpError] = useState<string | null>(null);
   const [sltpSuccess, setSltpSuccess] = useState<string | null>(null);
 
-  // Risk-hide toggle
-  const [hideRisk, setHideRiskState] = useState<boolean>(readRiskHide);
-
-  // Derived R-multiple
   const entryNum = parseFloat(entry);
   const stopNum = parseFloat(stop);
   const targetNum = parseFloat(target);
@@ -95,17 +137,60 @@ const TksModsPanel = () => {
       ? rMultiple(entryNum, stopNum, targetNum)
       : null;
 
-  // -------------------------------------------------------------------------
-  // Handlers
-  // -------------------------------------------------------------------------
+  // ── Position size calculator ───────────────────────────────────────────────
+  const [psEntry, setPsEntry] = useState('');
+  const [psStop, setPsStop] = useState('');
+  const [psRisk, setPsRisk] = useState('');
+  const [psSpec, setPsSpec] = useState<SpecId>('MNQ');
+  const [psResult, setPsResult] = useState<SizingResult | null>(null);
+  const [psPending, setPsPending] = useState(false);
+  const [psError, setPsError] = useState<string | null>(null);
 
-  const handleThemeChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      const val = e.target.value as 'default' | 'zeth';
-      setTheme(val);
-    },
-    [setTheme]
-  );
+  // ── Pre-trade checklist ────────────────────────────────────────────────────
+  const [checklist, setChecklist] = useState<ChecklistItem[]>(DEFAULT_CHECKLIST);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [newItemLabel, setNewItemLabel] = useState('');
+  const [confirmSuccess, setConfirmSuccess] = useState(false);
+
+  const allChecked = checklist.length > 0 && checklist.every(item => checked.has(item.id));
+
+  // ── Symbol favorites ───────────────────────────────────────────────────────
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [favInput, setFavInput] = useState('');
+  const [favError, setFavError] = useState<string | null>(null);
+  const [favSwitchPending, setFavSwitchPending] = useState<string | null>(null);
+
+  // ── Walk-away lockout ──────────────────────────────────────────────────────
+  const [lockoutStatus, setLockoutStatus] = useState<LockoutStatus | null>(null);
+  const [lockoutPending, setLockoutPending] = useState(false);
+  const [forceResetArmed, setForceResetArmed] = useState(false);
+  const [maxDailyLoss, setMaxDailyLoss] = useState('');
+  const [maxConsecLosses, setMaxConsecLosses] = useState('');
+  const [cooldownMins, setCooldownMins] = useState('60');
+  const [lockoutConfigSaved, setLockoutConfigSaved] = useState(false);
+
+  // ── Risk-hide toggle ───────────────────────────────────────────────────────
+  const [hideRisk, setHideRiskState] = useState<boolean>(readRiskHide);
+
+  // ── Load lockout on mount ──────────────────────────────────────────────────
+  const refreshLockout = useCallback(async () => {
+    try {
+      const s = await invoke<LockoutStatus>('lockout_status');
+      setLockoutStatus(s);
+      // Sync config inputs from loaded state.
+      setMaxDailyLoss(s.config.max_daily_loss_dollars?.toString() ?? '');
+      setMaxConsecLosses(s.config.max_consecutive_losses?.toString() ?? '');
+      setCooldownMins(s.config.cooldown_minutes.toString());
+    } catch {
+      // Non-fatal; show unlocked state.
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshLockout();
+  }, [refreshLockout]);
+
+  // ── Handlers: SL/TP ───────────────────────────────────────────────────────
 
   const handleDrawSltp = useCallback(async () => {
     setSltpError(null);
@@ -155,6 +240,185 @@ const TksModsPanel = () => {
     }
   }, []);
 
+  // ── Handlers: position sizer ───────────────────────────────────────────────
+
+  const handleComputeSize = useCallback(async () => {
+    setPsError(null);
+    setPsResult(null);
+    const e = parseFloat(psEntry);
+    const s = parseFloat(psStop);
+    const r = parseFloat(psRisk);
+    if (Number.isNaN(e) || Number.isNaN(s) || Number.isNaN(r)) {
+      setPsError('Enter valid numbers for Entry, Stop, and Risk $.');
+      return;
+    }
+    setPsPending(true);
+    try {
+      const result = await invoke<SizingResult>('compute_position_size', {
+        entry: e,
+        stop: s,
+        riskDollars: r,
+        specId: psSpec,
+      });
+      setPsResult(result);
+      if (result.error) {
+        setPsError(result.error);
+      }
+    } catch (err) {
+      setPsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPsPending(false);
+    }
+  }, [psEntry, psStop, psRisk, psSpec]);
+
+  // ── Handlers: checklist ────────────────────────────────────────────────────
+
+  const toggleCheck = useCallback((id: string) => {
+    setChecked(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+    setConfirmSuccess(false);
+  }, []);
+
+  const addChecklistItem = useCallback(() => {
+    const label = newItemLabel.trim();
+    if (!label) return;
+    const id = `custom-${Date.now()}`;
+    setChecklist(prev => [...prev, { id, label }]);
+    setNewItemLabel('');
+    setConfirmSuccess(false);
+  }, [newItemLabel]);
+
+  const removeChecklistItem = useCallback((id: string) => {
+    setChecklist(prev => prev.filter(item => item.id !== id));
+    setChecked(prev => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setConfirmSuccess(false);
+  }, []);
+
+  const moveItem = useCallback((index: number, direction: -1 | 1) => {
+    setChecklist(prev => {
+      const arr = [...prev];
+      const target = index + direction;
+      if (target < 0 || target >= arr.length) return arr;
+      [arr[index], arr[target]] = [arr[target], arr[index]];
+      return arr;
+    });
+  }, []);
+
+  const handleConfirmSetup = useCallback(() => {
+    if (!allChecked) return;
+    const ts = new Date().toISOString();
+    console.info(`[tks-mods] Pre-trade checklist passed at ${ts}`);
+    setConfirmSuccess(true);
+    setChecked(new Set());
+  }, [allChecked]);
+
+  // ── Handlers: symbol favorites ─────────────────────────────────────────────
+
+  const addFavorite = useCallback(() => {
+    const sym = favInput.trim().toUpperCase();
+    if (!sym) return;
+    if (favorites.length >= MAX_FAVORITES) {
+      setFavError(`Maximum ${MAX_FAVORITES} favorites — remove one before adding.`);
+      return;
+    }
+    if (favorites.includes(sym)) {
+      setFavError(`${sym} is already in your favorites.`);
+      return;
+    }
+    setFavError(null);
+    setFavorites(prev => [...prev, sym]);
+    setFavInput('');
+  }, [favInput, favorites]);
+
+  const removeFavorite = useCallback((sym: string) => {
+    setFavError(null);
+    setFavorites(prev => prev.filter(s => s !== sym));
+  }, []);
+
+  const switchToFavorite = useCallback(
+    async (sym: string) => {
+      if (!tvAttached) return;
+      setFavSwitchPending(sym);
+      setFavError(null);
+      try {
+        const result = await invoke<{ ok: boolean; symbol: string | null; error: string | null }>(
+          'tv_cdp_set_symbol',
+          { symbol: sym }
+        );
+        if (!result.ok) {
+          setFavError(result.error ?? `Failed to switch to ${sym}.`);
+        }
+      } catch (err) {
+        setFavError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setFavSwitchPending(null);
+      }
+    },
+    [tvAttached]
+  );
+
+  // ── Handlers: lockout ──────────────────────────────────────────────────────
+
+  const handleManualTrip = useCallback(async () => {
+    setLockoutPending(true);
+    try {
+      const s = await invoke<LockoutStatus>('lockout_trip', { reason: 'Manual walk-away' });
+      setLockoutStatus(s);
+    } catch {
+      // silently ignore
+    } finally {
+      setLockoutPending(false);
+    }
+  }, []);
+
+  const handleForceReset = useCallback(async () => {
+    if (!forceResetArmed) return;
+    setLockoutPending(true);
+    try {
+      const s = await invoke<LockoutStatus>('lockout_reset');
+      setLockoutStatus(s);
+      setForceResetArmed(false);
+    } catch {
+      // silently ignore
+    } finally {
+      setLockoutPending(false);
+    }
+  }, [forceResetArmed]);
+
+  const handleSaveLockoutConfig = useCallback(async () => {
+    setLockoutPending(true);
+    setLockoutConfigSaved(false);
+    const mdl = maxDailyLoss.trim() === '' ? null : parseFloat(maxDailyLoss);
+    const mcl = maxConsecLosses.trim() === '' ? null : parseInt(maxConsecLosses, 10);
+    const cm = parseInt(cooldownMins, 10) || 60;
+    try {
+      const s = await invoke<LockoutStatus>('lockout_set_config', {
+        maxDailyLossDollars: Number.isNaN(mdl as number) ? null : mdl,
+        maxConsecutiveLosses: Number.isNaN(mcl as number) ? null : mcl,
+        cooldownMinutes: cm,
+      });
+      setLockoutStatus(s);
+      setLockoutConfigSaved(true);
+    } catch {
+      // silently ignore
+    } finally {
+      setLockoutPending(false);
+    }
+  }, [maxDailyLoss, maxConsecLosses, cooldownMins]);
+
+  // ── Handler: risk-hide toggle ──────────────────────────────────────────────
+
   const handleRiskHideToggle = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const next = e.target.checked;
     try {
@@ -165,181 +429,700 @@ const TksModsPanel = () => {
     setHideRiskState(next);
   }, []);
 
-  // -------------------------------------------------------------------------
-  // Render
-  // -------------------------------------------------------------------------
+  // ── Handler: theme ─────────────────────────────────────────────────────────
+
+  const handleThemeChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      setTheme(e.target.value as 'default' | 'zeth');
+    },
+    [setTheme]
+  );
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  const isLocked = lockoutStatus?.is_locked ?? false;
 
   return (
     <div className="flex h-full w-full flex-col bg-stone-50">
       <SettingsHeader breadcrumbs={breadcrumbs} onBack={navigateBack} title="TK's Mods" />
-      <div className="flex-1 space-y-4 overflow-y-auto p-6">
-        {/* ── 1. Theme picker ───────────────────────────────────────────── */}
-        <section
-          data-testid="tks-mods-theme-card"
-          className="rounded-xl border border-stone-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-stone-900">Theme</h2>
-          <p className="mt-1 text-[11px] text-stone-500">
-            Applies to Whiskey UI surfaces only — TradingView's own UI is unaffected. Switch takes
-            effect instantly with no reload required.
+
+      {/* ── Lockout banner (shown at top when locked) ──────────────────────── */}
+      {isLocked ? (
+        <div
+          data-testid="tks-mods-lockout-banner"
+          role="alert"
+          className="mx-6 mt-4 rounded-xl border border-red-300 bg-red-50 p-3">
+          <p className="text-xs font-semibold text-red-800">
+            Locked out until {formatLockoutUntil(lockoutStatus?.locked_until_unix ?? null)} —
+            Whiskey will not surface setups.
           </p>
-          <div className="mt-3 flex items-center gap-3">
-            <label htmlFor="tk-theme-select" className="text-xs text-stone-600">
-              Active theme
-            </label>
-            <select
-              id="tk-theme-select"
-              data-testid="tks-mods-theme-select"
-              value={theme}
-              onChange={handleThemeChange}
-              className="flex-1 rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500">
-              {THEMES.map(t => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          {theme === 'zeth' && (
-            <p
-              data-testid="tks-mods-zeth-active-label"
-              className="mt-2 text-[11px] font-medium"
-              style={{ color: 'var(--tk-accent, #39ff14)' }}>
-              ZETH active — deep black / neon green palette engaged.
-            </p>
-          )}
-        </section>
-
-        {/* ── 2. SL/TP overlay ─────────────────────────────────────────── */}
-        <section
-          data-testid="tks-mods-sltp-card"
-          className="rounded-xl border border-stone-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-stone-900">SL/TP Overlay</h2>
-          <p className="mt-1 text-[11px] text-stone-500">
-            Draws native TV horizontal lines for your stop and target — works even when prop-firm
-            broker panels hide the default order lines. Requires the TradingView bridge to be
-            attached (see TradingView Bridge settings).
-          </p>
-
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            {/* Entry */}
-            <div className="flex flex-col gap-1">
-              <label htmlFor="tk-sltp-entry" className="text-[11px] text-stone-500">
-                Entry
-              </label>
-              <input
-                id="tk-sltp-entry"
-                type="number"
-                step="any"
-                value={entry}
-                onChange={e => setEntry(e.target.value)}
-                disabled={sltpPending}
-                placeholder="e.g. 19800"
-                data-testid="tks-mods-sltp-entry"
-                className="rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50 disabled:text-stone-400"
-              />
-            </div>
-            {/* Stop */}
-            <div className="flex flex-col gap-1">
-              <label htmlFor="tk-sltp-stop" className="text-[11px] text-stone-500">
-                Stop
-              </label>
-              <input
-                id="tk-sltp-stop"
-                type="number"
-                step="any"
-                value={stop}
-                onChange={e => setStop(e.target.value)}
-                disabled={sltpPending}
-                placeholder="e.g. 19750"
-                data-testid="tks-mods-sltp-stop"
-                className="rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50 disabled:text-stone-400"
-              />
-            </div>
-            {/* Target */}
-            <div className="flex flex-col gap-1">
-              <label htmlFor="tk-sltp-target" className="text-[11px] text-stone-500">
-                Target
-                {rLabel ? (
-                  <span data-testid="tks-mods-r-label" className="ml-1 font-mono text-green-600">
-                    {rLabel}
-                  </span>
-                ) : null}
-              </label>
-              <input
-                id="tk-sltp-target"
-                type="number"
-                step="any"
-                value={target}
-                onChange={e => setTarget(e.target.value)}
-                disabled={sltpPending}
-                placeholder="e.g. 19875"
-                data-testid="tks-mods-sltp-target"
-                className="rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50 disabled:text-stone-400"
-              />
-            </div>
-          </div>
-
-          {sltpSuccess ? (
-            <p className="mt-2 text-[11px] text-green-700" data-testid="tks-mods-sltp-success">
-              {sltpSuccess}
-            </p>
+          {lockoutStatus?.lock_reason ? (
+            <p className="mt-1 text-[11px] text-red-700">{lockoutStatus.lock_reason}</p>
           ) : null}
+        </div>
+      ) : null}
 
-          <div className="mt-3 flex gap-2">
+      <div className="flex-1 space-y-6 overflow-y-auto p-6">
+        {/* ═══════════════════════════════════════════════════════════════════
+            SECTION 1 — AI Mode
+        ═══════════════════════════════════════════════════════════════════ */}
+        <div>
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+            AI Mode
+          </h3>
+          <div className="space-y-3">
+            <ModesPanelBody />
+          </div>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            SECTION 2 — TradingView Bridge
+        ═══════════════════════════════════════════════════════════════════ */}
+        <div>
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+            TradingView Bridge
+          </h3>
+          <div className="space-y-3">
+            <TvBridgePanelBody onAttachedChange={setTvAttached} />
+          </div>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            SECTION 3 — SL/TP Overlay
+        ═══════════════════════════════════════════════════════════════════ */}
+        <div>
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+            SL/TP Overlay
+          </h3>
+          <section
+            data-testid="tks-mods-sltp-card"
+            className="rounded-xl border border-stone-200 bg-white p-4">
+            <h2 className="text-sm font-semibold text-stone-900">Stop / Target lines</h2>
+            <p className="mt-1 text-[11px] text-stone-500">
+              Draws native TV horizontal lines for your stop and target — works even when prop-firm
+              broker panels hide the default order lines. Requires the TV bridge to be attached.
+            </p>
+
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="tk-sltp-entry" className="text-[11px] text-stone-500">
+                  Entry
+                </label>
+                <input
+                  id="tk-sltp-entry"
+                  type="number"
+                  step="any"
+                  value={entry}
+                  onChange={e => setEntry(e.target.value)}
+                  disabled={sltpPending}
+                  placeholder="e.g. 19800"
+                  data-testid="tks-mods-sltp-entry"
+                  className="rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50 disabled:text-stone-400"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="tk-sltp-stop" className="text-[11px] text-stone-500">
+                  Stop
+                </label>
+                <input
+                  id="tk-sltp-stop"
+                  type="number"
+                  step="any"
+                  value={stop}
+                  onChange={e => setStop(e.target.value)}
+                  disabled={sltpPending}
+                  placeholder="e.g. 19750"
+                  data-testid="tks-mods-sltp-stop"
+                  className="rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50 disabled:text-stone-400"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="tk-sltp-target" className="text-[11px] text-stone-500">
+                  Target
+                  {rLabel ? (
+                    <span data-testid="tks-mods-r-label" className="ml-1 font-mono text-green-600">
+                      {rLabel}
+                    </span>
+                  ) : null}
+                </label>
+                <input
+                  id="tk-sltp-target"
+                  type="number"
+                  step="any"
+                  value={target}
+                  onChange={e => setTarget(e.target.value)}
+                  disabled={sltpPending}
+                  placeholder="e.g. 19875"
+                  data-testid="tks-mods-sltp-target"
+                  className="rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50 disabled:text-stone-400"
+                />
+              </div>
+            </div>
+
+            {sltpSuccess ? (
+              <p className="mt-2 text-[11px] text-green-700" data-testid="tks-mods-sltp-success">
+                {sltpSuccess}
+              </p>
+            ) : null}
+
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={() => void handleDrawSltp()}
+                disabled={sltpPending}
+                data-testid="tks-mods-draw-button"
+                className="rounded-md bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-300">
+                {sltpPending ? 'Working…' : 'Draw on chart'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleClearSltp()}
+                disabled={sltpPending}
+                data-testid="tks-mods-clear-button"
+                className="rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400">
+                Clear my overlays
+              </button>
+            </div>
+
+            {sltpError ? (
+              <div
+                role="alert"
+                data-testid="tks-mods-error"
+                className="mt-3 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">
+                {sltpError}
+              </div>
+            ) : null}
+          </section>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            SECTION 4 — Position Size Calculator
+        ═══════════════════════════════════════════════════════════════════ */}
+        <div>
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+            Position Size Calculator
+          </h3>
+          <section
+            data-testid="tks-mods-position-sizer-card"
+            className="rounded-xl border border-stone-200 bg-white p-4">
+            <h2 className="text-sm font-semibold text-stone-900">Size my position</h2>
+            <p className="mt-1 text-[11px] text-stone-500">
+              Floors to whole contracts — never rounds up and never overruns your risk budget.
+            </p>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="ps-entry" className="text-[11px] text-stone-500">
+                  Entry price
+                </label>
+                <input
+                  id="ps-entry"
+                  type="number"
+                  step="any"
+                  value={psEntry}
+                  onChange={e => setPsEntry(e.target.value)}
+                  disabled={psPending}
+                  placeholder="e.g. 19800"
+                  data-testid="tks-mods-ps-entry"
+                  className="rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50 disabled:text-stone-400"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="ps-stop" className="text-[11px] text-stone-500">
+                  Stop price
+                </label>
+                <input
+                  id="ps-stop"
+                  type="number"
+                  step="any"
+                  value={psStop}
+                  onChange={e => setPsStop(e.target.value)}
+                  disabled={psPending}
+                  placeholder="e.g. 19750"
+                  data-testid="tks-mods-ps-stop"
+                  className="rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50 disabled:text-stone-400"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="ps-risk" className="text-[11px] text-stone-500">
+                  Risk $ (per trade)
+                </label>
+                <input
+                  id="ps-risk"
+                  type="number"
+                  step="any"
+                  min="0"
+                  value={psRisk}
+                  onChange={e => setPsRisk(e.target.value)}
+                  disabled={psPending}
+                  placeholder="e.g. 200"
+                  data-testid="tks-mods-ps-risk"
+                  className="rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50 disabled:text-stone-400"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="ps-spec" className="text-[11px] text-stone-500">
+                  Instrument
+                </label>
+                <select
+                  id="ps-spec"
+                  value={psSpec}
+                  onChange={e => setPsSpec(e.target.value as SpecId)}
+                  disabled={psPending}
+                  data-testid="tks-mods-ps-spec"
+                  className="rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50 disabled:text-stone-400">
+                  {SPEC_IDS.map(id => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
             <button
               type="button"
-              onClick={() => void handleDrawSltp()}
-              disabled={sltpPending}
-              data-testid="tks-mods-draw-button"
-              className="rounded-md bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-300">
-              {sltpPending ? 'Working…' : 'Draw on chart'}
+              onClick={() => void handleComputeSize()}
+              disabled={psPending}
+              data-testid="tks-mods-ps-compute"
+              className="mt-3 rounded-md bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-300">
+              {psPending ? 'Calculating…' : 'Calculate'}
             </button>
+
+            {psResult && !psResult.error ? (
+              <div
+                data-testid="tks-mods-ps-result"
+                className="mt-3 rounded-md border border-green-200 bg-green-50 p-3">
+                <p className="text-sm font-semibold text-green-900">
+                  <span data-testid="tks-mods-ps-contracts">{psResult.contracts}</span> contract
+                  {psResult.contracts !== 1 ? 's' : ''}
+                </p>
+                <p className="mt-0.5 text-[11px] text-green-700">
+                  Actual risk: ${psResult.actual_risk_dollars.toFixed(2)} ( $
+                  {psResult.risk_per_contract.toFixed(2)}/contract)
+                </p>
+              </div>
+            ) : null}
+
+            {psError ? (
+              <div
+                role="alert"
+                data-testid="tks-mods-ps-error"
+                className="mt-3 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">
+                {psError}
+              </div>
+            ) : null}
+          </section>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            SECTION 5 — Pre-trade Checklist
+        ═══════════════════════════════════════════════════════════════════ */}
+        <div>
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+            Pre-trade Checklist
+          </h3>
+          <section
+            data-testid="tks-mods-checklist-card"
+            className="rounded-xl border border-stone-200 bg-white p-4">
+            <h2 className="text-sm font-semibold text-stone-900">Confirm setup</h2>
+            <p className="mt-1 text-[11px] text-stone-500">
+              Check every item before entering. &quot;Confirm setup&quot; logs the all-clear and
+              resets the checkboxes.
+            </p>
+
+            <ul className="mt-3 space-y-2" data-testid="tks-mods-checklist-list">
+              {checklist.map((item, idx) => (
+                <li key={item.id} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id={`cl-${item.id}`}
+                    checked={checked.has(item.id)}
+                    onChange={() => toggleCheck(item.id)}
+                    data-testid={`tks-mods-cl-check-${item.id}`}
+                    className="h-4 w-4 rounded border-stone-300 text-primary-500 focus:ring-primary-500"
+                  />
+                  <label
+                    htmlFor={`cl-${item.id}`}
+                    className="flex-1 text-xs text-stone-700"
+                    data-testid={`tks-mods-cl-label-${item.id}`}>
+                    {item.label}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => moveItem(idx, -1)}
+                    disabled={idx === 0}
+                    aria-label="Move up"
+                    className="shrink-0 rounded px-1 py-0.5 text-[11px] text-stone-400 hover:text-stone-700 disabled:opacity-30">
+                    ▲
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveItem(idx, 1)}
+                    disabled={idx === checklist.length - 1}
+                    aria-label="Move down"
+                    className="shrink-0 rounded px-1 py-0.5 text-[11px] text-stone-400 hover:text-stone-700 disabled:opacity-30">
+                    ▼
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeChecklistItem(item.id)}
+                    aria-label={`Remove "${item.label}"`}
+                    data-testid={`tks-mods-cl-remove-${item.id}`}
+                    className="shrink-0 rounded px-1 py-0.5 text-[11px] text-stone-400 hover:text-red-600">
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+
+            {/* Add item */}
+            <div className="mt-3 flex items-center gap-2">
+              <input
+                type="text"
+                value={newItemLabel}
+                onChange={e => setNewItemLabel(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') addChecklistItem();
+                }}
+                placeholder="Add a checklist item…"
+                data-testid="tks-mods-cl-new-input"
+                className="flex-1 rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              />
+              <button
+                type="button"
+                onClick={addChecklistItem}
+                disabled={newItemLabel.trim().length === 0}
+                data-testid="tks-mods-cl-add"
+                className="shrink-0 rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400">
+                Add
+              </button>
+            </div>
+
+            {confirmSuccess ? (
+              <p
+                data-testid="tks-mods-cl-confirm-success"
+                className="mt-3 text-[11px] text-green-700">
+                Pre-trade checklist passed at {new Date().toLocaleTimeString()}.
+              </p>
+            ) : null}
+
             <button
               type="button"
-              onClick={() => void handleClearSltp()}
-              disabled={sltpPending}
-              data-testid="tks-mods-clear-button"
-              className="rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400">
-              Clear my overlays
+              onClick={handleConfirmSetup}
+              disabled={!allChecked}
+              data-testid="tks-mods-cl-confirm"
+              className="mt-3 rounded-md bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-300">
+              Confirm setup
             </button>
-          </div>
-        </section>
+          </section>
+        </div>
 
-        {/* ── 3. Risk-hide toggle ───────────────────────────────────────── */}
-        <section
-          data-testid="tks-mods-risk-hide-card"
-          className="rounded-xl border border-stone-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-stone-900">Hide risk %</h2>
-          <p className="mt-1 text-[11px] text-stone-500">
-            When on, Whiskey replaces dollar amounts and percentages in messages with abstract terms
-            (e.g. "$250 risk" → "risk unit", "0.5% account risk" → "small position"). R-multiples
-            like "1.5R" are preserved.
-          </p>
-          <label className="mt-3 flex cursor-pointer items-center gap-3">
-            <input
-              type="checkbox"
-              checked={hideRisk}
-              onChange={handleRiskHideToggle}
-              data-testid="tks-mods-risk-hide-toggle"
-              className="h-4 w-4 rounded border-stone-300 text-primary-500 focus:ring-primary-500"
-            />
-            <span className="text-xs text-stone-700">
-              {hideRisk
-                ? 'On — dollar and percentage amounts are redacted'
-                : 'Off — amounts shown as-is'}
-            </span>
-          </label>
-        </section>
+        {/* ═══════════════════════════════════════════════════════════════════
+            SECTION 6 — Symbol Favorites
+        ═══════════════════════════════════════════════════════════════════ */}
+        <div>
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+            Symbol Favorites
+          </h3>
+          <section
+            data-testid="tks-mods-favorites-card"
+            className="rounded-xl border border-stone-200 bg-white p-4">
+            <h2 className="text-sm font-semibold text-stone-900">Quick-switch symbols</h2>
+            <p className="mt-1 text-[11px] text-stone-500">
+              Click a symbol to switch the active TV chart. Only active when the TV bridge is
+              attached. Max {MAX_FAVORITES} entries.
+            </p>
 
-        {/* ── Shared error region ───────────────────────────────────────── */}
-        {sltpError ? (
-          <div
-            role="alert"
-            data-testid="tks-mods-error"
-            className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">
-            {sltpError}
-          </div>
-        ) : null}
+            {!tvAttached ? (
+              <p className="mt-2 text-[11px] text-amber-700">
+                TV bridge not attached — connect in the section above to enable switching.
+              </p>
+            ) : null}
+
+            {favorites.length > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-2" data-testid="tks-mods-favorites-list">
+                {favorites.map(sym => (
+                  <div key={sym} className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void switchToFavorite(sym)}
+                      disabled={!tvAttached || favSwitchPending === sym}
+                      data-testid={`tks-mods-fav-btn-${sym}`}
+                      className="rounded-md border border-stone-200 bg-white px-2.5 py-1 text-xs font-mono font-medium text-stone-700 hover:bg-primary-50 hover:border-primary-300 disabled:cursor-not-allowed disabled:opacity-50">
+                      {favSwitchPending === sym ? '…' : sym}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeFavorite(sym)}
+                      aria-label={`Remove ${sym}`}
+                      data-testid={`tks-mods-fav-remove-${sym}`}
+                      className="rounded px-0.5 text-[11px] text-stone-300 hover:text-red-500">
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-[11px] text-stone-400">
+                No favorites yet — add your first symbol below.
+              </p>
+            )}
+
+            <div className="mt-3 flex items-center gap-2">
+              <input
+                type="text"
+                value={favInput}
+                onChange={e => setFavInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') addFavorite();
+                }}
+                placeholder="CME_MINI:NQ1!"
+                maxLength={64}
+                data-testid="tks-mods-fav-input"
+                className="flex-1 rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              />
+              <button
+                type="button"
+                onClick={addFavorite}
+                disabled={favInput.trim().length === 0}
+                data-testid="tks-mods-fav-add"
+                className="shrink-0 rounded-md bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-300">
+                Add
+              </button>
+            </div>
+
+            {favError ? (
+              <div
+                role="alert"
+                data-testid="tks-mods-fav-error"
+                className="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">
+                {favError}
+              </div>
+            ) : null}
+          </section>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            SECTION 7 — Walk-away Lockout
+        ═══════════════════════════════════════════════════════════════════ */}
+        <div>
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+            Walk-away Lockout
+          </h3>
+          <section
+            data-testid="tks-mods-lockout-card"
+            className="rounded-xl border border-stone-200 bg-white p-4">
+            <h2 className="text-sm font-semibold text-stone-900">Risk governor</h2>
+            <p className="mt-1 text-[11px] text-stone-500">
+              Survives app restarts — you cannot dodge the lockout by relaunching. Set your limits
+              before you start trading.
+            </p>
+
+            {/* Current state */}
+            <div className="mt-3 rounded-md bg-stone-50 px-3 py-2 text-[11px] text-stone-600">
+              Today:{' '}
+              <span data-testid="tks-mods-lockout-daily">
+                -${lockoutStatus?.daily_loss_dollars.toFixed(2) ?? '0.00'}
+              </span>{' '}
+              /{' '}
+              <span data-testid="tks-mods-lockout-consec">
+                {lockoutStatus?.consecutive_losses ?? 0} losses
+              </span>{' '}
+              /{' '}
+              <span
+                data-testid="tks-mods-lockout-state"
+                className={isLocked ? 'font-semibold text-red-700' : 'text-green-700'}>
+                {isLocked
+                  ? `locked until ${formatLockoutUntil(lockoutStatus?.locked_until_unix ?? null)}`
+                  : 'unlocked'}
+              </span>
+            </div>
+
+            {/* Threshold config */}
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="lo-max-dl" className="text-[11px] text-stone-500">
+                  Max daily loss $
+                </label>
+                <input
+                  id="lo-max-dl"
+                  type="number"
+                  step="any"
+                  min="0"
+                  value={maxDailyLoss}
+                  onChange={e => setMaxDailyLoss(e.target.value)}
+                  disabled={lockoutPending}
+                  placeholder="e.g. 300"
+                  data-testid="tks-mods-lockout-max-dl"
+                  className="rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="lo-max-cl" className="text-[11px] text-stone-500">
+                  Max consec. losses
+                </label>
+                <input
+                  id="lo-max-cl"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={maxConsecLosses}
+                  onChange={e => setMaxConsecLosses(e.target.value)}
+                  disabled={lockoutPending}
+                  placeholder="e.g. 3"
+                  data-testid="tks-mods-lockout-max-cl"
+                  className="rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="lo-cooldown" className="text-[11px] text-stone-500">
+                  Cooldown (min)
+                </label>
+                <input
+                  id="lo-cooldown"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={cooldownMins}
+                  onChange={e => setCooldownMins(e.target.value)}
+                  disabled={lockoutPending}
+                  placeholder="60"
+                  data-testid="tks-mods-lockout-cooldown"
+                  className="rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50"
+                />
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void handleSaveLockoutConfig()}
+                disabled={lockoutPending}
+                data-testid="tks-mods-lockout-save-config"
+                className="rounded-md bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-300">
+                Save limits
+              </button>
+              {lockoutConfigSaved ? (
+                <span className="self-center text-[11px] text-green-700">Saved.</span>
+              ) : null}
+            </div>
+
+            <div className="mt-4 border-t border-stone-100 pt-3">
+              <p className="text-[11px] font-medium text-stone-600">Manual controls</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleManualTrip()}
+                  disabled={lockoutPending || isLocked}
+                  data-testid="tks-mods-lockout-trip"
+                  className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50">
+                  Trip lockout now
+                </button>
+
+                {isLocked ? (
+                  <>
+                    <label className="flex items-center gap-2 text-xs text-stone-600">
+                      <input
+                        type="checkbox"
+                        checked={forceResetArmed}
+                        onChange={e => setForceResetArmed(e.target.checked)}
+                        data-testid="tks-mods-lockout-arm-reset"
+                        className="h-4 w-4 rounded border-stone-300 text-primary-500"
+                      />
+                      Arm force reset
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void handleForceReset()}
+                      disabled={lockoutPending || !forceResetArmed}
+                      data-testid="tks-mods-lockout-force-reset"
+                      className="rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50">
+                      Force reset
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          </section>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            SECTION 8 — Theme
+        ═══════════════════════════════════════════════════════════════════ */}
+        <div>
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+            Theme
+          </h3>
+          <section
+            data-testid="tks-mods-theme-card"
+            className="rounded-xl border border-stone-200 bg-white p-4">
+            <h2 className="text-sm font-semibold text-stone-900">UI Theme</h2>
+            <p className="mt-1 text-[11px] text-stone-500">
+              Applies to Whiskey UI surfaces only — TradingView&apos;s own UI is unaffected. Switch
+              takes effect instantly with no reload required.
+            </p>
+            <div className="mt-3 flex items-center gap-3">
+              <label htmlFor="tk-theme-select" className="text-xs text-stone-600">
+                Active theme
+              </label>
+              <select
+                id="tk-theme-select"
+                data-testid="tks-mods-theme-select"
+                value={theme}
+                onChange={handleThemeChange}
+                className="flex-1 rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                {THEMES.map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {theme === 'zeth' && (
+              <p
+                data-testid="tks-mods-zeth-active-label"
+                className="mt-2 text-[11px] font-medium"
+                style={{ color: 'var(--tk-accent, #39ff14)' }}>
+                ZETH active — deep black / neon green palette engaged.
+              </p>
+            )}
+          </section>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            SECTION 9 — Risk-hide toggle
+        ═══════════════════════════════════════════════════════════════════ */}
+        <div>
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+            Psychology
+          </h3>
+          <section
+            data-testid="tks-mods-risk-hide-card"
+            className="rounded-xl border border-stone-200 bg-white p-4">
+            <h2 className="text-sm font-semibold text-stone-900">Hide risk %</h2>
+            <p className="mt-1 text-[11px] text-stone-500">
+              When on, Whiskey replaces dollar amounts and percentages in messages with abstract
+              terms (e.g. &quot;$250 risk&quot; → &quot;risk unit&quot;, &quot;0.5% account
+              risk&quot; → &quot;small position&quot;). R-multiples like &quot;1.5R&quot; are
+              preserved.
+            </p>
+            <label className="mt-3 flex cursor-pointer items-center gap-3">
+              <input
+                type="checkbox"
+                checked={hideRisk}
+                onChange={handleRiskHideToggle}
+                data-testid="tks-mods-risk-hide-toggle"
+                className="h-4 w-4 rounded border-stone-300 text-primary-500 focus:ring-primary-500"
+              />
+              <span className="text-xs text-stone-700">
+                {hideRisk
+                  ? 'On — dollar and percentage amounts are redacted'
+                  : 'Off — amounts shown as-is'}
+              </span>
+            </label>
+          </section>
+        </div>
       </div>
     </div>
   );
