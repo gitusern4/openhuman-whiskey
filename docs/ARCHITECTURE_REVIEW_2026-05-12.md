@@ -547,3 +547,64 @@ _End of review. Cross-referenced files: `src/openhuman/modes/whiskey.rs`,
 `src/openhuman/overlay/bus.rs`, `app/src-tauri/src/lib.rs`,
 `tradingview_cdp.rs`, PR-#4..#7 diffs, `docs/ORDER_FLOW_RESEARCH.md`,
 `WHISKEY_AUDIT.md`._
+
+---
+
+# Phase 2 review — post-merge orchestrator + execution-v1 builder
+
+_Appended 2026-05-12 by senior architect during parallel-builder review._
+_Trunk audited: `whiskey` at `fa0e652e`. Execution branch: `execution-v1` at `ca8c2f7a` (PR #10)._
+
+## What shipped on `whiskey` (in merge order)
+
+| Commit | Source | Status against Phase 1 block list |
+|---|---|---|
+| `d0471bd5` | PR #4 — TvChartStateTool + TvSetSymbolTool | Tools landed as documented stubs. `webview_apis` bridge wiring still pending. Not a regression. |
+| `7abb0573` | PR #5 — onboarding wizard | **DoneStep route fix verified.** `app/src/components/onboarding/steps/DoneStep.tsx:27` now reads `navigate('/settings/tks-mods')`. Phase 1 blocker #2 closed. |
+| `aed51f20` | PR #8 — CDP supervisor + `tv_cdp_eval` IPC gate | **IPC gate present.** `tradingview_cdp.rs:519` rejects callers where `webview.label() != "main"`. The merge initially broke four internal call sites (lines 560, 631, 901, 923 still passing 2-arg form against new 3-arg signature). Orchestrator fixed in `fa0e652e` by extracting `tv_cdp_eval_internal` at `tradingview_cdp.rs:539` — public command keeps the gate, internal callers route around it. Phase 1 blocker #4 closed. |
+| `4ea8a0a0` | PR #7 — order_flow Rust + Tauri | Merged authoritatively per Phase 1 recommendation. `CONTRACT.md` shipped. Preset IDs `vwap_profile_anchored / standard_orderflow / delta_focused` are now canonical. |
+| `fa0e652e` | PR #6 — order_flow UI rewritten to PR #7 contract | **Contract reconciliation verified.** New `app/src/types/orderFlow.ts` mirrors Rust struct. `useOrderFlow.ts` invokes `order_flow_set_config` (not `_save_config`). Phase 1 blocker #1 closed. |
+
+## What is still pending from Phase 1 block list
+
+3. **`publish_attention` synchronous TKS config disk-read per event** — `src/openhuman/overlay/bus.rs:52` still calls `tks_mods_config::load()` on every event. No cache, no invalidation hook. **Open.**
+
+## What is still pending from Phase 1 ship-in-v2 list
+
+- **AtomicTomlStore consolidation.** `tks_mods_config.rs:142` still uses direct `std::fs::write`. Same for `lockout.rs:153` and the others. No `with_extension("toml.tmp") + rename` helper landed. **Open.**
+- **Lockout server-gate.** `lockout.rs::force_reset()` at `:224` still resets unconditionally — no 5-minute armed-timer check in Rust state. UI-gated only. **Open.**
+- **Outbox nonce (PR #9).** PR #9 is still open. Reviewed in this phase: `app/src-tauri/src/overlay/whiskey_overlay.js:27-28` exposes `__WHISKEY_OVERLAY_OUTBOX` as a plain `window` global. `tv_overlay.rs` has no nonce in `OverlayCommand`. Architect comment posted on PR #9. **Blocker, open.**
+
+## Execution-v1 (PR #10) — first review
+
+### Library modules (acceptable for merge once command surface is fixed)
+
+- **Covenant validator** rejects `require_per_trade_confirm = false` at startup (`covenant.rs:86-89`). Real, tested.
+- **Audit writer** is append-only (`audit.rs:138-143`: `OpenOptions::new().create(true).append(true)`). No `write(true)`, no `seek`, no `truncate`. Day-file rotation present. Two-writer append test at `:254`.
+- **Kill switch ordering** correct: cancel (`kill_switch.rs:133`) → flatten (`:138`) → revoke (`:143`) → audit (`:146`). Token revoked last so cancel/flatten can succeed.
+- **Plausibility check** treats kill-engaged as gate 1 (`plausibility.rs:115-117`); kill-flatten correctly routes through a separate `topstepx::flatten` path that bypasses this check by virtue of not going through `submit_bracket_order` at all. Audit entry is tagged `actor: System, action: Kill` (`kill_switch.rs:146-150`).
+- **TopStepX `isAutomated: true`** set on every bracket (`topstepx/orders.rs:60`). Test pins the wire shape at `:91-113`.
+- **Kill switch reset** has both 30-minute cooldown and exact phrase (`"I am ready to trade"`, `kill_switch.rs:173-198`). Server-enforced.
+
+### Command surface (blocker)
+
+`app/src-tauri/src/execution_commands.rs` is a stub that lies about its behavior:
+
+- `submit_bracket_order` (`:111-152`) — docstring claims kill / plausibility / covenant gates. Implementation calls none of them, writes no audit, returns a fabricated proposal hash. UI built against this surface will accept invalid proposals.
+- `confirm_bracket_order` (`:156-164`) — accepts any 64-char string; no proposal-store lookup, no replay protection, no re-validation, no pre-call/post-call audit. Docstring claims pre/post audit are written. They are not.
+- `kill_switch_request_reset` Tauri command bypasses the library function's cooldown + phrase enforcement (acknowledged in comment).
+- Tests exercise only stub happy paths. Failure-path coverage at the Tauri command layer is zero.
+
+Recommendation: split PR #10. The library code (covenant, audit, kill_switch, plausibility, topstepx) is mergeable. The Tauri commands must be wired through the library before merge. See PR #10 comment for the wiring checklist.
+
+## Most important risk that remains post-merge
+
+**The covenant invariant is enforced in `modes/covenant.rs` but never invoked on the trade-submission path.** If PR #10 merges as-is, the execution layer ships with a real, validated covenant struct that is loaded by nothing on the order-entry path. The audit writer is append-only, but no audit entry is written when an order is proposed or confirmed. The plausibility module is total, but the Tauri command that frontend calls bypasses it. The system performs the *appearance* of safety enforcement (modules exist, tests pass, types check) while the actual order-entry surface — the only surface a UI or LLM can reach — runs none of the gates.
+
+A subtle variant of this risk: even after wiring lands, the proposal store needs short TTL + single-use semantics. Without those, a confirmed hash can be re-played hours later and the system will re-submit the order. The architecture for this is straightforward (Tauri managed state, `Mutex<HashMap<String, (TradeProposal, Instant)>>`, 120s TTL, remove-on-consume) but no slot for it exists in the current diff. Add it during wiring, not after.
+
+## Sign-off
+
+- Trunk (`whiskey` at `fa0e652e`): **conditional sign-off.** PR-#5 / #7 / #6 / #8 / #4 closed cleanly. Three Phase 1 items remain open (publish_attention cache, AtomicTomlStore, lockout server-gate) — defer to v2 acceptable.
+- PR #9 (overlay panel): **not signed off.** Nonce required.
+- PR #10 (execution-v1): **not signed off.** Library mergeable; commands must be wired through the library before merge.
