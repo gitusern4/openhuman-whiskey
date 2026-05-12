@@ -136,11 +136,7 @@ const TradingViewBridgePanel = () => {
 
   return (
     <div className="flex h-full w-full flex-col bg-stone-50">
-      <SettingsHeader
-        breadcrumbs={breadcrumbs}
-        onBack={navigateBack}
-        title="TradingView bridge"
-      />
+      <SettingsHeader breadcrumbs={breadcrumbs} onBack={navigateBack} title="TradingView bridge" />
       <div className="flex-1 space-y-4 overflow-y-auto p-6">
         <section
           data-testid="tv-bridge-setup-card"
@@ -219,9 +215,7 @@ const TradingViewBridgePanel = () => {
           {probe?.tv_targets.length ? (
             <div className="mt-3 text-[11px] text-stone-600">
               Discovered TV pages:
-              <ul
-                data-testid="tv-bridge-target-list"
-                className="mt-1 space-y-1">
+              <ul data-testid="tv-bridge-target-list" className="mt-1 space-y-1">
                 {probe.tv_targets.map(t => (
                   <li key={t.id} className="font-mono text-[10px] text-stone-500">
                     {t.title || '(untitled)'} — {t.url}
@@ -250,9 +244,7 @@ const TradingViewBridgePanel = () => {
             {chartState ? (
               <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                 <dt className="text-stone-500">Symbol</dt>
-                <dd
-                  data-testid="tv-bridge-symbol"
-                  className="text-right font-mono text-stone-900">
+                <dd data-testid="tv-bridge-symbol" className="text-right font-mono text-stone-900">
                   {chartState.symbol ?? '—'}
                 </dd>
                 <dt className="text-stone-500">Resolution</dt>

@@ -333,10 +333,7 @@ const Settings = () => {
         {/* Whiskey fork — agent-mode picker. */}
         <Route path="modes" element={wrapSettingsPage(<ModesPanel />)} />
         {/* Whiskey fork — TradingView Desktop CDP bridge. */}
-        <Route
-          path="tradingview-bridge"
-          element={wrapSettingsPage(<TradingViewBridgePanel />)}
-        />
+        <Route path="tradingview-bridge" element={wrapSettingsPage(<TradingViewBridgePanel />)} />
         <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />
         <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
         <Route
