@@ -45,7 +45,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
-use crate::cdp::{CdpConn, CdpTarget};
+use crate::cdp::target::CdpTarget;
+use crate::cdp::CdpConn;
 
 /// Default Chrome DevTools port for TradingView Desktop. The user can
 /// override via `tv_cdp_attach`'s `port` argument when they had to pick
