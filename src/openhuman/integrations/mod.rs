@@ -9,6 +9,7 @@ pub mod client;
 pub mod google_places;
 pub mod parallel;
 pub mod stock_prices;
+pub mod topstepx;
 pub mod twilio;
 pub mod types;
 
