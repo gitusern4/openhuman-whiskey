@@ -3,7 +3,6 @@ compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supp
 
 mod cdp;
 // Whiskey fork — order-flow Rust + Tauri command layer.
-mod order_flow_commands;
 #[cfg(target_os = "macos")]
 mod cef_preflight;
 mod cef_profile;
@@ -17,6 +16,7 @@ mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
+mod order_flow_commands;
 // Whiskey fork — global hotkey to summon/hide the mascot from any
 // foreground app (default CmdOrCtrl+Shift+Space). Cross-platform; the
 // per-OS dispatch lives in `mascot_window_show` / `_hide` in this file.
@@ -24,6 +24,7 @@ mod mascot_summon_hotkey;
 // Whiskey fork — Windows mascot path. Parallel to mascot_native_window
 // (which is macOS-only). Both are gated on their target_os; lib.rs
 // dispatches via #[cfg] branches inside mascot_window_show / hide.
+mod execution_commands;
 #[cfg(target_os = "windows")]
 mod mascot_windows_state;
 #[cfg(target_os = "windows")]
@@ -39,7 +40,6 @@ mod process_recovery;
 mod screen_capture;
 mod slack_scanner;
 mod telegram_scanner;
-mod execution_commands;
 mod tradingview_cdp;
 mod tv_cdp_supervisor;
 mod tv_overlay;
@@ -1635,8 +1635,8 @@ pub fn run() {
     // outbox-poll background task. See `tv_overlay.rs`.
     let builder = builder.manage(tv_overlay::TvOverlayState::default());
     // Whiskey execution layer — openhuman_dir, broker client, proposal store.
-    let openhuman_dir = cef_profile::default_root_openhuman_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let openhuman_dir =
+        cef_profile::default_root_openhuman_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let builder = builder.manage(execution_commands::OpenhumanDir(std::sync::Arc::new(
         openhuman_dir,
     )));

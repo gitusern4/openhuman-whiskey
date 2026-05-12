@@ -23,14 +23,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use openhuman_core::openhuman::modes::audit::{AuditAction, AuditActor, AuditEntry, AuditWriter};
-use openhuman_core::openhuman::modes::covenant::Covenant;
-use openhuman_core::openhuman::modes::kill_switch;
-use openhuman_core::openhuman::modes::plausibility::{self, TradeProposal};
 use openhuman_core::openhuman::integrations::topstepx::orders::{
     place_bracket_order, BracketOrder,
 };
 use openhuman_core::openhuman::integrations::topstepx::TopStepClient;
+use openhuman_core::openhuman::modes::audit::{AuditAction, AuditActor, AuditEntry, AuditWriter};
+use openhuman_core::openhuman::modes::covenant::Covenant;
+use openhuman_core::openhuman::modes::kill_switch;
+use openhuman_core::openhuman::modes::plausibility::{self, TradeProposal};
 
 // ---------------------------------------------------------------------------
 // Managed state types
@@ -201,11 +201,10 @@ pub async fn kill_switch_trigger(
             reset_after_utc: Some(now + 1800),
         };
         // Persist engaged state directly.
-        let toml_str = toml::to_string(&state)
-            .map_err(|e| format!("kill_switch serialize error: {}", e))?;
+        let toml_str =
+            toml::to_string(&state).map_err(|e| format!("kill_switch serialize error: {}", e))?;
         let tmp = openhuman_dir.join("kill_switch.toml.tmp");
-        std::fs::write(&tmp, &toml_str)
-            .map_err(|e| format!("kill_switch write error: {}", e))?;
+        std::fs::write(&tmp, &toml_str).map_err(|e| format!("kill_switch write error: {}", e))?;
         std::fs::rename(&tmp, openhuman_dir.join("kill_switch.toml"))
             .map_err(|e| format!("kill_switch rename error: {}", e))?;
 
@@ -269,12 +268,20 @@ pub async fn kill_switch_status(
 
     let seconds_until_reset = state.reset_after_utc.map(|r| {
         let remaining = r - Utc::now().timestamp();
-        if remaining < 0 { 0 } else { remaining }
+        if remaining < 0 {
+            0
+        } else {
+            remaining
+        }
     });
 
     Ok(KillSwitchStatus {
         engaged: state.engaged,
-        engaged_at: if state.engaged { Some(state.engaged_at) } else { None },
+        engaged_at: if state.engaged {
+            Some(state.engaged_at)
+        } else {
+            None
+        },
         trigger: None, // trigger field not surfaced (avoids leaking cause to UI without auth)
         reset_after_utc: state.reset_after_utc,
         seconds_until_reset,
@@ -389,13 +396,12 @@ pub async fn submit_bracket_order(
         session_loss_count: None,
         daily_pnl_at_action: None,
         kill_engaged: false,
-        notes: Some(format!(
-            "proposal hash prefix: {}",
-            &proposal_hash[..8]
-        )),
+        notes: Some(format!("proposal hash prefix: {}", &proposal_hash[..8])),
         covenant_hash: Some(covenant_hash.clone()),
     };
-    audit.record(&pre_entry).map_err(|e| format!("audit error: {}", e))?;
+    audit
+        .record(&pre_entry)
+        .map_err(|e| format!("audit error: {}", e))?;
 
     // Gate 6: store proposal by hash (TTL 120s, single-use).
     {
@@ -527,7 +533,9 @@ pub async fn confirm_bracket_order(
         notes: Some(format!("confirm for hash prefix: {}", &proposal_hash[..8])),
         covenant_hash: Some(covenant.hash()),
     };
-    audit.record(&confirm_entry).map_err(|e| format!("audit error: {}", e))?;
+    audit
+        .record(&confirm_entry)
+        .map_err(|e| format!("audit error: {}", e))?;
 
     // Gate 6: broker call — client must be connected.
     let client_guard = client_state
@@ -592,17 +600,18 @@ pub async fn confirm_bracket_order(
         session_loss_count: None,
         daily_pnl_at_action: None,
         kill_engaged: false,
-        notes: order_id_str.as_deref().map(|id| format!("broker order_id: {}", id)),
+        notes: order_id_str
+            .as_deref()
+            .map(|id| format!("broker order_id: {}", id)),
         covenant_hash: Some(covenant.hash()),
     };
-    audit.record(&send_entry).map_err(|e| format!("post-send audit error: {}", e))?;
+    audit
+        .record(&send_entry)
+        .map_err(|e| format!("post-send audit error: {}", e))?;
 
     // Propagate broker error after audit is written.
     let resp = broker_result?;
-    Ok(format!(
-        "order_submitted:{}",
-        resp.order_id.unwrap_or(0)
-    ))
+    Ok(format!("order_submitted:{}", resp.order_id.unwrap_or(0)))
 }
 
 /// Session state for the revenge-trading UX components.
@@ -783,8 +792,7 @@ reset_kills_at_session_start = true
         let tmp = tempfile::tempdir().unwrap();
         engage_kill_switch(tmp.path()); // engaged_at = now
 
-        let err =
-            kill_switch::request_reset(tmp.path(), "I am ready to trade").unwrap_err();
+        let err = kill_switch::request_reset(tmp.path(), "I am ready to trade").unwrap_err();
         assert!(err.contains("cooldown not elapsed"), "got: {err}");
     }
 
@@ -856,9 +864,9 @@ reset_kills_at_session_start = true
             action: "Buy".to_string(),
             signal_direction: "long".to_string(),
             instrument: "TSLA".to_string(), // not in whitelist
-            qty: 100,                        // exceeds cap of 2
+            qty: 100,                       // exceeds cap of 2
             entry_price: None,
-            stop_loss_ticks: 0,              // stop required
+            stop_loss_ticks: 0, // stop required
             take_profit_ticks: 16,
             idempotency_key: "test".to_string(),
             confidence_pct: 75,
@@ -1064,19 +1072,17 @@ reset_kills_at_session_start = true
         let mut audit = AuditWriter::open(tmp.path()).unwrap();
         let trigger = openhuman_core::openhuman::modes::kill_switch::KillTrigger::ManualButton;
 
-        let result = kill_switch::trigger_kill(
-            tmp.path(),
-            &client,
-            0,
-            trigger,
-            &mut audit,
-            0,
-            0.0,
-        )
-        .await;
+        let result =
+            kill_switch::trigger_kill(tmp.path(), &client, 0, trigger, &mut audit, 0, 0.0).await;
 
-        assert!(result.is_ok(), "trigger_kill must succeed even with revoked client");
-        assert!(kill_switch::is_engaged(tmp.path()), "kill switch must be engaged after trigger");
+        assert!(
+            result.is_ok(),
+            "trigger_kill must succeed even with revoked client"
+        );
+        assert!(
+            kill_switch::is_engaged(tmp.path()),
+            "kill switch must be engaged after trigger"
+        );
 
         // Verify Kill audit entry was written.
         let today = Utc::now().date_naive();
