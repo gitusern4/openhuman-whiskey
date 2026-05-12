@@ -617,6 +617,44 @@ pub(crate) async fn run_tool_call_loop(
                 }
             }
 
+            // Whiskey fork: per-dispatch active-mode allowlist enforcement.
+            //
+            // The construction-time filter `filter_tools_by_active_mode`
+            // already shrinks the registry to the active mode's allowlist,
+            // but that snapshot goes stale the moment the user switches
+            // modes mid-session — the agent loop is still holding the
+            // tool list it built for the previous mode, so the LLM can
+            // try to call a tool the *new* mode would forbid. This
+            // re-consults the active mode at every call so post-switch
+            // dispatches are gated correctly even though the registry
+            // itself is unchanged.
+            //
+            // DefaultMode advertises no allowlist → helper returns true
+            // for every name, preserving upstream behaviour.
+            if tool_opt.is_some()
+                && !crate::openhuman::tools::user_filter::is_tool_allowed_in_active_mode(&call.name)
+            {
+                let active = crate::openhuman::modes::active_mode();
+                log::warn!(
+                    "[agent_loop] tool '{}' rejected — not in active mode '{}' allowlist",
+                    call.name,
+                    active.id()
+                );
+                let denied = format!(
+                    "Tool '{}' is not allowed in active mode '{}'",
+                    call.name,
+                    active.id()
+                );
+                emit_failed_completion(&denied).await;
+                individual_results.push(denied.clone());
+                let _ = writeln!(
+                    tool_results,
+                    "<tool_result name=\"{}\">\n{denied}\n</tool_result>",
+                    call.name
+                );
+                continue;
+            }
+
             let result = if let Some(tool) = tool_opt {
                 let tool_deadline =
                     crate::openhuman::tool_timeout::tool_execution_timeout_duration();

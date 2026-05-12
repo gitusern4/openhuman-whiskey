@@ -111,6 +111,36 @@ pub(crate) fn filter_tools_by_active_mode(tools: &mut Vec<Box<dyn crate::openhum
     }
 }
 
+/// Per-dispatch enforcement check — returns `true` if the named tool is
+/// allowed by the *currently-active* mode's `tool_allowlist()`.
+///
+/// This is the second layer of mode-based tool gating. The first layer
+/// is [`filter_tools_by_active_mode`], which prunes the registry at
+/// construction time so the LLM never even sees disallowed tools. That
+/// layer is great for the steady state but goes stale the moment the
+/// user switches modes mid-session — the agent loop is still holding
+/// the registry it built when mode A was active, and the LLM may try to
+/// call a tool that A allowed but the now-current mode B does not. This
+/// helper closes that gap by re-consulting the active mode at each
+/// dispatch.
+///
+/// `DefaultMode` returns `None` from `tool_allowlist()`, so this
+/// function returns `true` for every tool name — preserving upstream
+/// behaviour for users who never switch modes. Modes that DO supply an
+/// allowlist (e.g. `WhiskeyMode`) reject anything outside it.
+///
+/// Note: callers are responsible for converting a `false` return into
+/// the user-facing rejection (a `ToolResult` with `is_error: true` and
+/// a clear message). This function intentionally only answers the
+/// boolean question so it can be reused from any dispatch site.
+pub(crate) fn is_tool_allowed_in_active_mode(tool_name: &str) -> bool {
+    let mode = crate::openhuman::modes::active_mode();
+    match mode.tool_allowlist() {
+        None => true,
+        Some(allowlist) => allowlist.iter().any(|n| *n == tool_name),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,5 +181,62 @@ mod tests {
         assert!(allowlist.iter().any(|t| *t == "image_gen_pollinations"));
         assert!(!allowlist.iter().any(|t| t.contains("shell")));
         reset_to_default();
+    }
+
+    // ── Per-dispatch enforcement (`is_tool_allowed_in_active_mode`) ─
+
+    #[test]
+    fn default_mode_allows_every_tool_name_per_dispatch() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_to_default();
+        // DefaultMode advertises no allowlist → helper returns true for
+        // arbitrary names (including ones that don't exist as real tools).
+        assert!(is_tool_allowed_in_active_mode("shell"));
+        assert!(is_tool_allowed_in_active_mode("image_gen_pollinations"));
+        assert!(is_tool_allowed_in_active_mode("nonexistent_tool_xyz"));
+    }
+
+    #[test]
+    fn whiskey_mode_allows_listed_tool_per_dispatch() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _ = set_active_mode(WhiskeyMode::ID);
+        assert!(is_tool_allowed_in_active_mode("image_gen_pollinations"));
+        reset_to_default();
+    }
+
+    #[test]
+    fn whiskey_mode_rejects_shell_per_dispatch() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _ = set_active_mode(WhiskeyMode::ID);
+        assert!(!is_tool_allowed_in_active_mode("shell"));
+        reset_to_default();
+    }
+
+    /// Integration-style: simulate the dispatch site's two-step flow
+    /// (check helper → build rejection ToolResult on false) and verify
+    /// that mid-session mode switches flip the verdict for the same
+    /// tool name.
+    #[test]
+    fn mode_switch_flips_dispatch_verdict_for_same_tool() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let tool_name = "shell";
+
+        // Whiskey rejects shell — dispatch would build an error ToolResult.
+        let _ = set_active_mode(WhiskeyMode::ID);
+        assert!(!is_tool_allowed_in_active_mode(tool_name));
+        let mode = crate::openhuman::modes::active_mode();
+        let rejection = crate::openhuman::tools::traits::ToolResult::error(format!(
+            "Tool '{}' is not allowed in active mode '{}'",
+            tool_name,
+            mode.id()
+        ));
+        assert!(rejection.is_error);
+        assert!(rejection
+            .output()
+            .contains("not allowed in active mode 'whiskey'"));
+
+        // Switch back — same name now passes the check.
+        reset_to_default();
+        assert!(is_tool_allowed_in_active_mode(tool_name));
     }
 }
