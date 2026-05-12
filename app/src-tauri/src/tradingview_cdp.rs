@@ -114,9 +114,57 @@ pub struct TvChartState {
     pub resolution: Option<String>,
     pub price: Option<f64>,
     pub indicator_count: Option<u32>,
+    /// V2: id + name of each indicator on the active chart. `None` when
+    /// the introspection couldn't enumerate (TV moved the API path);
+    /// empty `Some(vec![])` when there genuinely are no indicators.
+    #[serde(default)]
+    pub indicators: Option<Vec<TvIndicatorSummary>>,
+    /// V2: id + name of each drawn shape (trendline, horizontal,
+    /// text, fib, etc.). Same null-vs-empty semantics as `indicators`.
+    #[serde(default)]
+    pub shapes: Option<Vec<TvShapeSummary>>,
+    /// V2: count of alert entries visible in the alert manager DOM.
+    /// `None` when the alert panel isn't open (best we can do without
+    /// a stable public surface).
+    #[serde(default)]
+    pub alert_count: Option<u32>,
     /// Raw JSON of whatever else our introspection snippet returns —
     /// keeps the schema forward-compatible while the bridge matures.
     pub raw: Value,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TvIndicatorSummary {
+    pub id: Option<String>,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TvShapeSummary {
+    pub id: Option<String>,
+    pub name: Option<String>,
+}
+
+/// Result of `tv_cdp_set_symbol`. `ok: false` when TV's internal
+/// `setSymbol` is unavailable for the active chart (TV release moved
+/// the API path) — the user-facing error is in `error`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TvSetSymbolResult {
+    pub ok: bool,
+    pub symbol: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Result of `tv_cdp_launch_tv`. Best-effort: searches a handful of
+/// well-known install paths for `TradingView.exe`, spawns it with
+/// `--remote-debugging-port=<port>`, returns the resolved path or
+/// `error` if no install was found.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TvLaunchResult {
+    pub launched: bool,
+    pub path: Option<String>,
+    pub port: u16,
+    pub error: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -211,48 +259,134 @@ fn extract_tv_targets(v: &Value) -> Vec<TvCdpTargetSummary> {
 // JavaScript snippets — TV's internal object tree
 // ---------------------------------------------------------------------------
 
-/// Read the currently displayed symbol + timeframe + last price from the
-/// TV chart. The expression is written to be forgiving: every property
-/// access is `?.` so a missing internal path returns `null` rather than
-/// throwing, and the surrounding `JSON.stringify` makes the whole
-/// expression safe to feed into `Runtime.evaluate` with `returnByValue`.
+/// Read the chart state — symbol, timeframe, drawn levels, indicator
+/// list, and alert summaries — from the TV renderer.
 ///
-/// This is the V1 introspection snippet. It captures the high-value
-/// fields a trading mentor needs (which symbol is the user looking at,
-/// what's the price). Drawn levels + indicator values + alerts come
-/// online in V2 once we've validated the symbol/price round-trip works
-/// across TV releases.
+/// Defensive style: every property access is `?.`, every iteration is
+/// guarded by `Array.isArray` / `typeof === 'function'`, and the entire
+/// expression is wrapped in a `try/catch` that returns `{ error }`
+/// rather than throwing. The contract is "fields the snippet can't
+/// resolve come back as `null`/empty-array, the bridge stays alive."
+/// That keeps Whiskey usable when a TV release moves an internal API
+/// path — the affected field degrades, the rest still works.
+///
+/// TV's internal object tree (paths we probe, in priority order):
+///   - `window.chartWidget`                 — primary widget on Desktop
+///   - `window.tradingViewApi.chart()`      — embedded library API
+///   - `window.TradingView.chart()`         — legacy global
+///   - `widget.activeChart()`               — currently focused chart
+///   - `chart.symbol() / .resolution()`     — string accessors
+///   - `chart.getAllStudies()`              — indicator list
+///   - `chart.getAllShapes()`               — drawn levels / lines / text
+///   - `chart.getStudyById(id).getInputValues()` — indicator params
+///   - DOM fallback: `document.title`, symbol-search input value
+///
+/// Reference: the patterns here come from the open-source
+/// `tradingview-mcp` projects (tradesdontlie + LewisWJackson forks).
+/// When TV breaks one of these paths, check those repos' issue trackers
+/// for the documented patch first — they're our canary.
 const JS_GET_CHART_STATE: &str = r#"
 (() => {
   try {
     const tv = window.tradingViewApi || window.TradingView || {};
-    const chartWidget = window.chartWidget || (tv.chart && tv.chart()) || null;
+    const chartWidget = window.chartWidget || (typeof tv.chart === 'function' ? tv.chart() : null);
     const activeChart = (chartWidget && typeof chartWidget.activeChart === 'function')
       ? chartWidget.activeChart()
       : null;
-    const symbol = activeChart && typeof activeChart.symbol === 'function'
+
+    const symbol = (activeChart && typeof activeChart.symbol === 'function')
       ? activeChart.symbol()
       : (document.querySelector('[data-name="symbol-search-items-dialog"] input')?.value
-         || document.title);
-    const resolution = activeChart && typeof activeChart.resolution === 'function'
+         || document.title
+         || null);
+    const resolution = (activeChart && typeof activeChart.resolution === 'function')
       ? activeChart.resolution()
       : null;
-    const study = activeChart && typeof activeChart.getAllStudies === 'function'
-      ? activeChart.getAllStudies()
-      : null;
+
+    // Indicators (studies). Each entry is reduced to {id, name} so the
+    // JSON payload stays small. Inputs/values per indicator are an
+    // opt-in V3 expansion — they balloon the payload on busy charts.
+    let indicators = [];
+    if (activeChart && typeof activeChart.getAllStudies === 'function') {
+      const studies = activeChart.getAllStudies();
+      if (Array.isArray(studies)) {
+        indicators = studies.map(s => ({
+          id: s?.id ?? null,
+          name: s?.name ?? null
+        }));
+      }
+    }
+
+    // Drawn shapes: trendlines, horizontals, text labels, fib levels.
+    // Same reduction policy — id + name only. Coordinates would need
+    // an additional API call per shape; defer to V3.
+    let shapes = [];
+    if (activeChart && typeof activeChart.getAllShapes === 'function') {
+      const allShapes = activeChart.getAllShapes();
+      if (Array.isArray(allShapes)) {
+        shapes = allShapes.map(s => ({
+          id: s?.id ?? null,
+          name: s?.name ?? null
+        }));
+      }
+    }
+
+    // Alerts: TV's alert model lives outside the chart widget in v2
+    // and has no stable public surface. Best-effort: count DOM-visible
+    // entries in the alert manager panel if it happens to be open.
+    // Returns null (not 0) when the panel isn't mounted so the UI
+    // shows "—" instead of a misleading "0".
+    let alert_count = null;
+    const alertList = document.querySelectorAll('[data-name="alerts-manager-item"]');
+    if (alertList) {
+      alert_count = alertList.length;
+    }
+
     return JSON.stringify({
       symbol: symbol || null,
       resolution: resolution || null,
       price: null,
-      indicator_count: study ? study.length : null,
+      indicator_count: indicators.length,
+      indicators,
+      shape_count: shapes.length,
+      shapes,
+      alert_count,
       _probe: {
         has_chartWidget: !!chartWidget,
         has_activeChart: !!activeChart,
+        has_getAllStudies: !!(activeChart && typeof activeChart.getAllStudies === 'function'),
+        has_getAllShapes: !!(activeChart && typeof activeChart.getAllShapes === 'function'),
         document_title: document.title || null
       }
     });
   } catch (e) {
     return JSON.stringify({ error: String(e) });
+  }
+})()
+"#;
+
+/// Write path: change the active chart's symbol.
+///
+/// The expression placeholder `__SYMBOL__` is substituted by
+/// `tv_cdp_set_symbol` at call time using `serde_json::to_string` so
+/// the value is safely JSON-encoded (handles quotes, backslashes, and
+/// non-ASCII). Substitution at the Rust layer rather than the JS layer
+/// means the LLM-provided symbol string never reaches V8 unescaped.
+const JS_SET_SYMBOL: &str = r#"
+(() => {
+  try {
+    const tv = window.tradingViewApi || window.TradingView || {};
+    const chartWidget = window.chartWidget || (typeof tv.chart === 'function' ? tv.chart() : null);
+    const activeChart = (chartWidget && typeof chartWidget.activeChart === 'function')
+      ? chartWidget.activeChart()
+      : null;
+    if (!activeChart || typeof activeChart.setSymbol !== 'function') {
+      return JSON.stringify({ ok: false, error: 'activeChart.setSymbol unavailable' });
+    }
+    activeChart.setSymbol(__SYMBOL__);
+    return JSON.stringify({ ok: true, symbol: __SYMBOL__ });
+  } catch (e) {
+    return JSON.stringify({ ok: false, error: String(e) });
   }
 })()
 "#;
@@ -407,6 +541,28 @@ pub async fn tv_cdp_get_chart_state(
         Value::String(s) => serde_json::from_str(s).unwrap_or(Value::Null),
         other => other.clone(),
     };
+    let indicators = parsed
+        .get("indicators")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|i| TvIndicatorSummary {
+                    id: i.get("id").and_then(|x| x.as_str()).map(str::to_string),
+                    name: i.get("name").and_then(|x| x.as_str()).map(str::to_string),
+                })
+                .collect::<Vec<_>>()
+        });
+    let shapes = parsed
+        .get("shapes")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|i| TvShapeSummary {
+                    id: i.get("id").and_then(|x| x.as_str()).map(str::to_string),
+                    name: i.get("name").and_then(|x| x.as_str()).map(str::to_string),
+                })
+                .collect::<Vec<_>>()
+        });
     Ok(TvChartState {
         symbol: parsed
             .get("symbol")
@@ -421,8 +577,130 @@ pub async fn tv_cdp_get_chart_state(
             .get("indicator_count")
             .and_then(|v| v.as_u64())
             .map(|n| n as u32),
+        indicators,
+        shapes,
+        alert_count: parsed
+            .get("alert_count")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32),
         raw: parsed,
     })
+}
+
+/// Write the active chart's symbol. Returns `{ok, symbol, error}`.
+/// Symbol is JSON-encoded at the Rust layer so it can't break out of
+/// the JS expression — defensive against any LLM-controlled value.
+#[tauri::command]
+pub async fn tv_cdp_set_symbol(
+    state: tauri::State<'_, TvCdpState>,
+    symbol: String,
+) -> Result<TvSetSymbolResult, String> {
+    // Trim + length-cap on the Rust side. TV's own symbol parser handles
+    // exchange prefixes (`NASDAQ:AAPL`, `CME_MINI:NQ1!`), but a 400-char
+    // payload is almost certainly an LLM hallucination not a real ticker.
+    let trimmed = symbol.trim();
+    if trimmed.is_empty() {
+        return Err("symbol must not be empty".to_string());
+    }
+    if trimmed.len() > 64 {
+        return Err(format!(
+            "symbol too long ({} > 64); refusing to set",
+            trimmed.len()
+        ));
+    }
+    let encoded = serde_json::to_string(trimmed).map_err(|e| format!("encode: {e}"))?;
+    let expr = JS_SET_SYMBOL.replace("__SYMBOL__", &encoded);
+    let raw = tv_cdp_eval(state, expr).await?;
+    let parsed: Value = match &raw {
+        Value::String(s) => serde_json::from_str(s).unwrap_or(Value::Null),
+        other => other.clone(),
+    };
+    Ok(TvSetSymbolResult {
+        ok: parsed.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
+        symbol: parsed
+            .get("symbol")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        error: parsed
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    })
+}
+
+/// Best-effort: find TradingView Desktop's installed exe on Windows
+/// and spawn it with `--remote-debugging-port=<port>`. Eliminates the
+/// "edit your shortcut" step from the onboarding wizard for the most
+/// common install layout. macOS / Linux paths land later; on those
+/// platforms today this returns `launched: false` with an error.
+#[tauri::command]
+pub async fn tv_cdp_launch_tv(port: Option<u16>) -> Result<TvLaunchResult, String> {
+    let port = port.unwrap_or(DEFAULT_TV_CDP_PORT);
+    #[cfg(target_os = "windows")]
+    {
+        let path = find_tv_exe_windows();
+        match path {
+            Some(p) => {
+                let display = p.display().to_string();
+                let arg = format!("--remote-debugging-port={port}");
+                match std::process::Command::new(&p).arg(&arg).spawn() {
+                    Ok(_child) => Ok(TvLaunchResult {
+                        launched: true,
+                        path: Some(display),
+                        port,
+                        error: None,
+                    }),
+                    Err(e) => Ok(TvLaunchResult {
+                        launched: false,
+                        path: Some(display),
+                        port,
+                        error: Some(format!("spawn failed: {e}")),
+                    }),
+                }
+            }
+            None => Ok(TvLaunchResult {
+                launched: false,
+                path: None,
+                port,
+                error: Some("TradingView.exe not found in common install paths".to_string()),
+            }),
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = port;
+        Ok(TvLaunchResult {
+            launched: false,
+            path: None,
+            port,
+            error: Some("auto-launch is Windows-only in v1".to_string()),
+        })
+    }
+}
+
+/// Search the common Windows install paths for `TradingView.exe`.
+/// Returns the first hit, or `None` if no install is found.
+#[cfg(target_os = "windows")]
+fn find_tv_exe_windows() -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // Per-user Squirrel install (the modern default). Pattern:
+    // %LOCALAPPDATA%\Programs\TradingView\TradingView.exe
+    if let Some(localappdata) = std::env::var_os("LOCALAPPDATA") {
+        let base = PathBuf::from(&localappdata);
+        candidates.push(base.join("Programs").join("TradingView").join("TradingView.exe"));
+        candidates.push(base.join("TradingView").join("TradingView.exe"));
+    }
+    // Machine-wide install variants.
+    if let Some(pf) = std::env::var_os("ProgramFiles") {
+        candidates.push(PathBuf::from(&pf).join("TradingView").join("TradingView.exe"));
+    }
+    if let Some(pfx86) = std::env::var_os("ProgramFiles(x86)") {
+        candidates.push(PathBuf::from(&pfx86).join("TradingView").join("TradingView.exe"));
+    }
+
+    candidates.into_iter().find(|p| p.is_file())
 }
 
 /// Detach the session (if any) and drop the underlying WebSocket.

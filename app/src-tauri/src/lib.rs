@@ -2080,6 +2080,8 @@ pub fn run() {
             tradingview_cdp::tv_cdp_attach,
             tradingview_cdp::tv_cdp_eval,
             tradingview_cdp::tv_cdp_get_chart_state,
+            tradingview_cdp::tv_cdp_set_symbol,
+            tradingview_cdp::tv_cdp_launch_tv,
             tradingview_cdp::tv_cdp_detach,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,

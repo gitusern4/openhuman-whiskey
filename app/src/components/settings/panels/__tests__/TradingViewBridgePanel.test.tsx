@@ -53,6 +53,16 @@ const FIXTURE_CHART_STATE = {
   resolution: '5',
   price: null,
   indicator_count: 3,
+  indicators: [
+    { id: 'st_1', name: 'Moving Average' },
+    { id: 'st_2', name: 'RSI' },
+    { id: 'st_3', name: 'Volume' },
+  ],
+  shapes: [
+    { id: 'sh_1', name: 'Horizontal Line' },
+    { id: 'sh_2', name: 'Trend Line' },
+  ],
+  alert_count: 4,
   raw: { _probe: { has_chartWidget: true } },
 };
 
@@ -147,6 +157,109 @@ describe('TradingViewBridgePanel', () => {
     );
     expect(screen.getByTestId('tv-bridge-resolution')).toHaveTextContent('5');
     expect(screen.getByTestId('tv-bridge-indicator-count')).toHaveTextContent('3');
+    expect(screen.getByTestId('tv-bridge-shape-count')).toHaveTextContent('2');
+    expect(screen.getByTestId('tv-bridge-alert-count')).toHaveTextContent('4');
+  });
+
+  it('writes a symbol via tv_cdp_set_symbol when attached', async () => {
+    mockInvoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === 'tv_cdp_probe') return REACHABLE_PROBE;
+      if (cmd === 'tv_cdp_attach') return REACHABLE_PROBE;
+      if (cmd === 'tv_cdp_set_symbol') {
+        return { ok: true, symbol: args?.symbol ?? null, error: null };
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+    render(<TradingViewBridgePanel />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('tv-bridge-status')).toHaveTextContent('reachable')
+    );
+    fireEvent.click(screen.getByTestId('tv-bridge-attach-button'));
+    await waitFor(() =>
+      expect(screen.getByTestId('tv-bridge-status')).toHaveTextContent('attached')
+    );
+
+    const symbolInput = screen.getByTestId('tv-bridge-symbol-input') as HTMLInputElement;
+    fireEvent.change(symbolInput, { target: { value: 'NASDAQ:NVDA' } });
+    fireEvent.click(screen.getByTestId('tv-bridge-set-symbol-button'));
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('tv_cdp_set_symbol', { symbol: 'NASDAQ:NVDA' })
+    );
+    // No error region — happy path.
+    expect(screen.queryByTestId('tv-bridge-error')).not.toBeInTheDocument();
+  });
+
+  it('surfaces a set-symbol failure from the backend', async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'tv_cdp_probe') return REACHABLE_PROBE;
+      if (cmd === 'tv_cdp_attach') return REACHABLE_PROBE;
+      if (cmd === 'tv_cdp_set_symbol') {
+        return { ok: false, symbol: null, error: 'activeChart.setSymbol unavailable' };
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+    render(<TradingViewBridgePanel />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('tv-bridge-status')).toHaveTextContent('reachable')
+    );
+    fireEvent.click(screen.getByTestId('tv-bridge-attach-button'));
+    await waitFor(() =>
+      expect(screen.getByTestId('tv-bridge-status')).toHaveTextContent('attached')
+    );
+
+    const symbolInput = screen.getByTestId('tv-bridge-symbol-input') as HTMLInputElement;
+    fireEvent.change(symbolInput, { target: { value: 'BAD' } });
+    fireEvent.click(screen.getByTestId('tv-bridge-set-symbol-button'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('tv-bridge-error')).toHaveTextContent(/setSymbol unavailable/)
+    );
+  });
+
+  it('invokes tv_cdp_launch_tv when Launch TV is clicked', async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'tv_cdp_probe') return UNREACHABLE_PROBE;
+      if (cmd === 'tv_cdp_launch_tv') {
+        return { launched: true, path: 'C:\\TV\\TradingView.exe', port: 9222, error: null };
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+    render(<TradingViewBridgePanel />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('tv-bridge-status')).toHaveTextContent('unreachable')
+    );
+    fireEvent.click(screen.getByTestId('tv-bridge-launch-button'));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('tv_cdp_launch_tv', { port: 9222 })
+    );
+  });
+
+  it('surfaces a launch error when TV.exe is not found', async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'tv_cdp_probe') return UNREACHABLE_PROBE;
+      if (cmd === 'tv_cdp_launch_tv') {
+        return {
+          launched: false,
+          path: null,
+          port: 9222,
+          error: 'TradingView.exe not found in common install paths',
+        };
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+    render(<TradingViewBridgePanel />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('tv-bridge-status')).toHaveTextContent('unreachable')
+    );
+    fireEvent.click(screen.getByTestId('tv-bridge-launch-button'));
+    await waitFor(() =>
+      expect(screen.getByTestId('tv-bridge-error')).toHaveTextContent(/not found/)
+    );
   });
 
   it('detaches and clears the chart-state card', async () => {

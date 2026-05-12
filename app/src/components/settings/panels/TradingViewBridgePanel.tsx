@@ -44,12 +44,38 @@ interface TvCdpProbeResult {
   error: string | null;
 }
 
+interface TvIndicatorSummary {
+  id: string | null;
+  name: string | null;
+}
+
+interface TvShapeSummary {
+  id: string | null;
+  name: string | null;
+}
+
 interface TvChartState {
   symbol: string | null;
   resolution: string | null;
   price: number | null;
   indicator_count: number | null;
+  indicators: TvIndicatorSummary[] | null;
+  shapes: TvShapeSummary[] | null;
+  alert_count: number | null;
   raw: unknown;
+}
+
+interface TvSetSymbolResult {
+  ok: boolean;
+  symbol: string | null;
+  error: string | null;
+}
+
+interface TvLaunchResult {
+  launched: boolean;
+  path: string | null;
+  port: number;
+  error: string | null;
 }
 
 const DEFAULT_PORT = 9222;
@@ -62,6 +88,44 @@ const TradingViewBridgePanel = () => {
   const [attached, setAttached] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [symbolDraft, setSymbolDraft] = useState<string>('');
+
+  const launchTv = useCallback(async () => {
+    setPending(true);
+    setError(null);
+    try {
+      const result = await invoke<TvLaunchResult>('tv_cdp_launch_tv', { port });
+      if (!result.launched) {
+        setError(
+          result.error ??
+            `Could not auto-launch TradingView (path: ${result.path ?? 'unknown'}). Launch it manually with --remote-debugging-port=${port}.`
+        );
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Launch failed: ${msg}`);
+    } finally {
+      setPending(false);
+    }
+  }, [port]);
+
+  const setSymbol = useCallback(async () => {
+    const next = symbolDraft.trim();
+    if (next.length === 0) return;
+    setPending(true);
+    setError(null);
+    try {
+      const result = await invoke<TvSetSymbolResult>('tv_cdp_set_symbol', { symbol: next });
+      if (!result.ok) {
+        setError(result.error ?? 'TV refused the symbol change (active chart unavailable?).');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Set symbol failed: ${msg}`);
+    } finally {
+      setPending(false);
+    }
+  }, [symbolDraft]);
 
   const runProbe = useCallback(async () => {
     setPending(true);
@@ -211,6 +275,15 @@ const TradingViewBridgePanel = () => {
               className="shrink-0 rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400">
               Detach
             </button>
+            <button
+              type="button"
+              onClick={() => void launchTv()}
+              disabled={pending || attached}
+              data-testid="tv-bridge-launch-button"
+              title="Best-effort: auto-spawn TradingView Desktop with the debug port set."
+              className="shrink-0 rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400">
+              Launch TV
+            </button>
           </div>
           {probe?.tv_targets.length ? (
             <div className="mt-3 text-[11px] text-stone-600">
@@ -259,12 +332,56 @@ const TradingViewBridgePanel = () => {
                   className="text-right font-mono text-stone-900">
                   {chartState.indicator_count ?? '—'}
                 </dd>
+                <dt className="text-stone-500">Shapes</dt>
+                <dd
+                  data-testid="tv-bridge-shape-count"
+                  className="text-right font-mono text-stone-900">
+                  {chartState.shapes?.length ?? '—'}
+                </dd>
+                <dt className="text-stone-500">Alerts visible</dt>
+                <dd
+                  data-testid="tv-bridge-alert-count"
+                  className="text-right font-mono text-stone-900">
+                  {chartState.alert_count ?? '—'}
+                </dd>
               </dl>
             ) : (
               <p className="mt-2 text-xs text-stone-500">
                 Not read yet. Click "Read now" to fetch live state.
               </p>
             )}
+          </section>
+        ) : null}
+
+        {attached ? (
+          <section
+            data-testid="tv-bridge-write-card"
+            className="rounded-xl border border-stone-200 bg-white p-4">
+            <h2 className="text-sm font-semibold text-stone-900">Switch symbol</h2>
+            <p className="mt-1 text-[11px] text-stone-500">
+              Writes the active chart's symbol via TV's internal API. Use exchange prefixes when
+              ambiguous (e.g. <code>CME_MINI:NQ1!</code>, <code>NASDAQ:AAPL</code>).
+            </p>
+            <div className="mt-3 flex items-center gap-2">
+              <input
+                type="text"
+                value={symbolDraft}
+                onChange={e => setSymbolDraft(e.target.value)}
+                disabled={pending}
+                placeholder="CME_MINI:NQ1!"
+                data-testid="tv-bridge-symbol-input"
+                maxLength={64}
+                className="flex-1 rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-stone-50 disabled:text-stone-400"
+              />
+              <button
+                type="button"
+                onClick={() => void setSymbol()}
+                disabled={pending || symbolDraft.trim().length === 0}
+                data-testid="tv-bridge-set-symbol-button"
+                className="shrink-0 rounded-md bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-300">
+                Set
+              </button>
+            </div>
           </section>
         ) : null}
 
