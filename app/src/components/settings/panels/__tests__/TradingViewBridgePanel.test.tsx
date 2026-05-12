@@ -78,6 +78,11 @@ describe('TradingViewBridgePanel', () => {
   it('runs an initial probe on mount and shows reachable status when TV responds', async () => {
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'tv_cdp_probe') return REACHABLE_PROBE;
+      // Handle commands the panel calls automatically that this test doesn't assert on
+      if (cmd === 'tv_cdp_get_auto_attach_status') {
+        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+      }
+      if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
     render(<TradingViewBridgePanel />);
@@ -91,6 +96,11 @@ describe('TradingViewBridgePanel', () => {
   it('shows an error when the initial probe finds TV unreachable', async () => {
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'tv_cdp_probe') return UNREACHABLE_PROBE;
+      // Handle commands the panel calls automatically that this test doesn't assert on
+      if (cmd === 'tv_cdp_get_auto_attach_status') {
+        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+      }
+      if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
     render(<TradingViewBridgePanel />);
@@ -104,6 +114,11 @@ describe('TradingViewBridgePanel', () => {
   it('disables the Attach button until the probe says TV is reachable', async () => {
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'tv_cdp_probe') return UNREACHABLE_PROBE;
+      // Handle commands the panel calls automatically that this test doesn't assert on
+      if (cmd === 'tv_cdp_get_auto_attach_status') {
+        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+      }
+      if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
     render(<TradingViewBridgePanel />);
@@ -119,6 +134,11 @@ describe('TradingViewBridgePanel', () => {
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'tv_cdp_probe') return REACHABLE_PROBE;
       if (cmd === 'tv_cdp_attach') return REACHABLE_PROBE;
+      // Handle commands the panel calls automatically that this test doesn't assert on
+      if (cmd === 'tv_cdp_get_auto_attach_status') {
+        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+      }
+      if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
     render(<TradingViewBridgePanel />);
@@ -139,6 +159,11 @@ describe('TradingViewBridgePanel', () => {
       if (cmd === 'tv_cdp_probe') return REACHABLE_PROBE;
       if (cmd === 'tv_cdp_attach') return REACHABLE_PROBE;
       if (cmd === 'tv_cdp_get_chart_state') return FIXTURE_CHART_STATE;
+      // Handle commands the panel calls automatically that this test doesn't assert on
+      if (cmd === 'tv_cdp_get_auto_attach_status') {
+        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+      }
+      if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
     render(<TradingViewBridgePanel />);
@@ -168,6 +193,11 @@ describe('TradingViewBridgePanel', () => {
       if (cmd === 'tv_cdp_set_symbol') {
         return { ok: true, symbol: args?.symbol ?? null, error: null };
       }
+      // Handle commands the panel calls automatically that this test doesn't assert on
+      if (cmd === 'tv_cdp_get_auto_attach_status') {
+        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+      }
+      if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
     render(<TradingViewBridgePanel />);
@@ -198,6 +228,11 @@ describe('TradingViewBridgePanel', () => {
       if (cmd === 'tv_cdp_set_symbol') {
         return { ok: false, symbol: null, error: 'activeChart.setSymbol unavailable' };
       }
+      // Handle commands the panel calls automatically that this test doesn't assert on
+      if (cmd === 'tv_cdp_get_auto_attach_status') {
+        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+      }
+      if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
     render(<TradingViewBridgePanel />);
@@ -225,6 +260,11 @@ describe('TradingViewBridgePanel', () => {
       if (cmd === 'tv_cdp_launch_tv') {
         return { launched: true, path: 'C:\\TV\\TradingView.exe', port: 9222, error: null };
       }
+      // Handle commands the panel calls automatically that this test doesn't assert on
+      if (cmd === 'tv_cdp_get_auto_attach_status') {
+        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+      }
+      if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
     render(<TradingViewBridgePanel />);
@@ -249,6 +289,11 @@ describe('TradingViewBridgePanel', () => {
           error: 'TradingView.exe not found in common install paths',
         };
       }
+      // Handle commands the panel calls automatically that this test doesn't assert on
+      if (cmd === 'tv_cdp_get_auto_attach_status') {
+        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+      }
+      if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
     render(<TradingViewBridgePanel />);
@@ -267,6 +312,11 @@ describe('TradingViewBridgePanel', () => {
       if (cmd === 'tv_cdp_probe') return REACHABLE_PROBE;
       if (cmd === 'tv_cdp_attach') return REACHABLE_PROBE;
       if (cmd === 'tv_cdp_detach') return undefined;
+      // Handle commands the panel calls automatically that this test doesn't assert on
+      if (cmd === 'tv_cdp_get_auto_attach_status') {
+        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+      }
+      if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
     render(<TradingViewBridgePanel />);
@@ -292,6 +342,11 @@ describe('TradingViewBridgePanel', () => {
       if (cmd === 'tv_cdp_attach') {
         throw new Error('No TradingView page target found');
       }
+      // Handle commands the panel calls automatically that this test doesn't assert on
+      if (cmd === 'tv_cdp_get_auto_attach_status') {
+        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+      }
+      if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
     render(<TradingViewBridgePanel />);
@@ -310,6 +365,11 @@ describe('TradingViewBridgePanel', () => {
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'tv_cdp_probe') return REACHABLE_PROBE;
       if (cmd === 'tv_cdp_attach') return REACHABLE_PROBE;
+      // Handle commands the panel calls automatically that this test doesn't assert on
+      if (cmd === 'tv_cdp_get_auto_attach_status') {
+        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+      }
+      if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
     render(<TradingViewBridgePanel />);
