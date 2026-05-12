@@ -7,14 +7,29 @@ This fork of `tinyhumansai/openhuman` adds:
 4. A persona memory cache that brings the user's curated playbook into
    every Whiskey-mode prompt
 5. A free image-gen tool via Pollinations.ai
+6. A TradingView Desktop CDP bridge (V1 + V2: chart state, set_symbol,
+   indicators, shapes, alerts, launch_tv, SL/TP overlay, order-flow)
+7. TK's Mods Suite — ZETH theme, SL/TP overlay, risk-hide toggle,
+   position sizer, pre-trade checklist, symbol favorites, walk-away
+   lockout (with server-gated 5-minute arm-then-reset protocol)
+8. First-run onboarding wizard (4-step modal: Welcome → Hotkey →
+   TV bridge → Done)
+9. In-TV draggable overlay panel (CDP-injected, nonce-protected outbox)
+10. Order-flow analysis card (cumulative delta, divergence, absorption)
+    with Rust core + UI matched to authoritative Rust contract
+11. CDP auto-attach supervisor (heartbeat + exponential reconnect + IPC
+    gate on `tv_cdp_eval` calling-webview label)
 
-**Branch state**: ~30 commits on `whiskey` (PR #1 against upstream),
-17/17 PR checks green on each pushed batch. Every architectural layer
-of the Whiskey loop is wired end-to-end. See `git log origin/main..whiskey`
-for the live commit ledger and `WHISKEY_AUDIT.md` for the capability
-review (2 critical + 5 high + 8 medium + 9 low findings; 2/2 critical,
-5/5 high, and the higher-leverage mediums all closed in subsequent
-audit-fix commits).
+**Branch state**: trunk `whiskey` at `61429b8d` (see `git log
+origin/main..whiskey`). Phase 1 of the architect review
+(`docs/ARCHITECTURE_REVIEW_2026-05-12.md` on the `architecture-review`
+branch) is fully closed on trunk: all four blockers (PR #6↔#7 contract
+drift, DoneStep route, `publish_attention` cache, `tv_cdp_eval` IPC
+gate) plus the two ship-in-v2 items reachable without new modules
+(lockout server-gate, outbox nonce) have landed. See `WHISKEY_AUDIT.md`
+for the earlier capability review (2 critical + 5 high + 8 medium +
+9 low; 2/2 critical, 5/5 high, and the higher-leverage mediums all
+closed).
 
 The one piece that still doesn't work is **native ARM64 Windows builds**
 — blocked on two upstream-vendored native deps (`whisper-rs-sys` +
@@ -144,11 +159,108 @@ source_url, bytes, elapsed_ms)`. `tokio::fs` everywhere.
 - `pub mod modes;` added to `src/openhuman/mod.rs`
 - `pub mod whiskey;` added to `src/openhuman/tools/mod.rs`
 
-## What's left (intentionally — Phase 2)
+### Phase 2 features shipped on trunk (May 12 batch)
 
-The end-to-end loop works. These are real follow-ups that didn't fit
-the "ship a complete Day-1 baseline" budget but have well-understood
-designs and would land cleanly on top of what's here.
+The "What's left" section below was originally written for the Day-1
+baseline. Most of the items it described have now shipped on `whiskey`.
+The list, in merge order, with the commit that landed each:
+
+- **`5bd27561`** TK's Mods foundation — ZETH theme, SL/TP overlay
+  primitives, risk-hide toggle, dedicated `TksModsPanel` route at
+  `/settings/tks-mods`.
+- **`9ee04752` (PR #3)** TK's Mods Suite — position sizer (Rust
+  `src/openhuman/modes/position_sizer.rs` with MNQ/MES/NQ/ES/MYM/M2K/
+  CL/GC/STOCK specs, 9 unit tests), pre-trade checklist (UI),
+  symbol favorites (max 20), walk-away lockout (Rust
+  `src/openhuman/modes/lockout.rs` with TOML persistence, 5 unit tests).
+- **`5273fbd1`** `risk_sanitizer` integrated at the `publish_attention`
+  boundary (per the risk-hide toggle).
+- **`045ee6cf`** `applyStoredTheme()` called before React mount to
+  prevent FOUC on theme load.
+- **`d0471bd5` (PR #4)** `TvChartStateTool` + `TvSetSymbolTool` as
+  openhuman `Tool` impls — registered + allowlisted for Whiskey mode;
+  schema + shape contract test land now, `execute()` returns a clean
+  "core_rpc bridge not yet wired" stub until the Tauri `webview_apis`
+  exposes `tradingview.*` handlers.
+- **`7abb0573` (PR #5)** First-run onboarding wizard — 4-step modal
+  (Welcome → Hotkey → TV bridge → Done). `DoneStep` CTA routes to
+  `/settings/tks-mods` (the architect-flagged stale `/settings/modes`
+  route was retargeted before merge).
+- **`4ea8a0a0` (PR #7)** Order-flow Rust + Tauri layer —
+  `src/openhuman/modes/order_flow.rs` (CVD, divergence, absorption,
+  18 unit tests) + 5 Tauri commands (`order_flow_get_config /
+  _set_config / _record_bar / _tag_active_trade / _apply_preset`).
+  Ships `CONTRACT.md` at branch root as the authoritative TS↔Rust
+  contract.
+- **`fa0e652e` (PR #6)** Order-flow UI card + TS contract aligned to
+  PR #7. `app/src/types/orderFlow.ts` mirrors the Rust struct.
+  `useOrderFlow.ts` invokes `order_flow_set_config` (architect's
+  contract-drift blocker closed). Same commit extracts
+  `tv_cdp_eval_internal` so the 5 internal CDP callers route around
+  the new public-command webview gate.
+- **`aed51f20` (PR #8)** CDP auto-attach supervisor —
+  `app/src-tauri/src/tv_cdp_supervisor.rs` (0.2 Hz heartbeat,
+  exponential 1s→30s reconnect, 60s manual-detach cooldown, TOML
+  persistence, 8 unit tests). Also installs the **`tv_cdp_eval` IPC
+  gate** (`tradingview_cdp.rs:519`) that rejects callers where
+  `webview.label() != "main"` — sealed the IPC privilege-escalation
+  hole the WhiskeyMode tool-allowlist alone could not close.
+- **`6cc56c91` (PR #9)** In-TV overlay panel — draggable Whiskey
+  panel injected into TV Desktop's renderer via Runtime.evaluate
+  (`app/src-tauri/src/tv_overlay.rs`, `overlay/whiskey_overlay.js`).
+  Surfaces favorites strip + quick SL/TP form + order-flow tag chips
+  + lockout banner. Ships the architect-required **outbox nonce**:
+  32-char hex per injection session, IIFE-closure-scoped (never
+  written to `window`), Rust filters every outbox entry whose
+  `__nonce` doesn't match.
+- **`2b69ab6f`** **Lockout server-gate** — Rust-enforced
+  arm-then-reset protocol (`src/openhuman/modes/lockout.rs`):
+  `arm_force_reset` writes `armed_for_reset_until = now() + 300s`;
+  `request_force_reset` rejects until the timer elapses. Closes the
+  "DevTools console can `invoke('lockout_reset')`" bypass — the
+  feature is now actually binding.
+- **`61429b8d`** **`publish_attention` hot-path cache** —
+  `src/openhuman/overlay/bus.rs` replaces the per-event TOML disk
+  read of `hide_risk_pct` with an `AtomicU8` tri-state cache;
+  `invalidate_tks_cache()` resets on settings-save.
+
+### TV CDP bridge (the original TV integration thread)
+
+Landed earlier in the batch (`51017863`, `822a8d91`, plus rustfmt /
+polish commits) — backend module + Tauri commands + V2 expansion
+covering indicators, shapes, alerts, `set_symbol`, `launch_tv`, plus
+the settings panel + nav entry + route + 8/8 vitest coverage on
+`TradingViewBridgePanel`.
+
+## What's left
+
+The end-to-end loop works. These are the items that are genuinely
+deferred — every other Phase-2 item in the original list has shipped
+on trunk (see "Phase 2 features shipped on trunk" above).
+
+### 0. Genuinely deferred (as of 2026-05-12)
+
+- **AtomicTomlStore<T> consolidation.** `src/openhuman/modes/
+  tks_mods_config.rs:142`, `lockout.rs:153`, and the order-flow /
+  onboarding / CDP-supervisor stores all still use direct
+  `std::fs::write`. The architect-recommended
+  `with_extension("toml.tmp") + rename` helper has not landed on
+  trunk. No `atomic-toml-store` branch on origin yet.
+- **PR #10 execution layer Tauri command wiring.** The library
+  modules on `execution-v1` (`ca8c2f7a`) — covenant validator, audit
+  writer, kill switch, plausibility check, TopStepX `isAutomated`
+  bracket — are real and tested. The Tauri command surface at
+  `app/src-tauri/src/execution_commands.rs` is still the stub that
+  bypasses every gate. Wiring through the library is the gating
+  work before any execution surface reaches the UI. Branch:
+  `execution-v1` on origin.
+- **Settings-save → `invalidate_tks_cache` hook.** The cache in
+  `61429b8d` is correct on its own, but no UI / Tauri code yet
+  calls `invalidate_tks_cache()` on a settings-save event — the
+  cache will only refresh on process restart until that hook lands.
+  No `ui-integration-pass` branch on origin yet.
+- **Native ARM64 Windows build** (next subsection — upstream-vendored
+  native-dep blockers, not local work).
 
 ### 1. Native ARM64 Windows build
 **Blocker**: two upstream-vendored native deps need ARM64 support.
@@ -174,28 +286,30 @@ a small square instead of a free-floating sprite. The native fallback
 is a Win32 layered window + WebView2 (separate from CEF), parallel to
 the macOS NSPanel + WKWebView path. ~600 LOC of `windows-rs` work.
 
-### 3. Phase-2 Whiskey integrations (originally in the plan)
-Each is a self-contained module that consumes the existing
-infrastructure shipped here:
+### 3. Phase-2 Whiskey integrations (originally in the plan) — remaining
+
+The TV-side surface of this list shipped via the CDP bridge V1+V2,
+TK's Mods Suite, in-TV overlay, and order-flow modules (see "Phase 2
+features shipped on trunk" above). What's still open:
+
   - **Screen-watch** for Windows trading platforms (WGC capture +
     Tesseract OCR + Gemini Flash fallback for ambiguous fields). The
     macOS-focused `screen_intelligence/` module is the API model;
     `screen_intelligence/windows/` is the new submodule. Architecture
     details + research are at the bottom of this file under
-    "Screen-watch on Windows".
+    "Screen-watch on Windows". Note: with the TV CDP bridge already
+    landed, screen-watch is no longer the only path to chart state —
+    its priority is now "covers platforms other than TV Desktop"
+    rather than "primary state source."
   - **Whiskey-trader hookup**: subscribe to screen-watch events,
     cross-reference against `whiskey_playbook.md` A+ catalog, emit
     setup suggestions via the existing `overlay::publish_attention`
     bus, auto-log fills back to the playbook.
   - **Heartbeat reflection swap**: extend `heartbeat::engine` (or
     its `subconscious::engine` callee) to consult
-    `active_mode().heartbeat_prompt_override()`. Currently the
-    heartbeat path inherits the persona prefix via the router-level
-    injection but doesn't see Whiskey's bespoke heartbeat schema.
+    `active_mode().heartbeat_prompt_override()`.
   - **Persistent active-mode** across restarts. Today the active
-    mode resets to `default` on every process boot. Add a
-    `~/.openhuman/active_mode.toml` write on every `set_active_mode`
-    + a read at boot. ~30 LOC.
+    mode resets to `default` on every process boot.
   - **Hotkey customisability**: surface a `register_mascot_summon_hotkey`
     Tauri command + a `HotkeyRecorder.tsx` settings entry, mirroring
     the existing dictation hotkey UX.
@@ -331,6 +445,65 @@ WGC capture path. Stack picks (from research):
 
 ## Architectural notes
 
+### Safety gate chain for the (in-flight) execution layer
+
+The execution layer being built on the `execution-v1` branch
+(`ca8c2f7a`) introduces a four-stage gate chain that every order
+proposal must traverse, in this order, on the path from UI to broker:
+
+1. **Covenant** (`src/openhuman/modes/covenant.rs`) — a session-
+   immutable config struct validated at startup. `require_per_trade_
+   confirm = false` is rejected before any router boots. The
+   covenant cannot be lowered mid-session by the LLM, by a settings
+   write, or by an IPC call — it is loaded once.
+2. **Kill switch** (`src/openhuman/modes/kill_switch.rs`) — when
+   engaged, gates 1 of the plausibility check; cancel → flatten →
+   revoke ordering ensures cancel/flatten can succeed before the
+   token is revoked. Reset requires both a 30-minute cooldown and
+   the exact phrase `"I am ready to trade"`, server-enforced
+   (`kill_switch.rs:173-198`).
+3. **Plausibility** (`src/openhuman/modes/plausibility.rs`) —
+   numeric sanity (price range, contract spec, position-size cap,
+   stop-vs-entry sign) before the order leaves the process.
+4. **Audit** (`src/openhuman/modes/audit.rs`) — append-only day-file
+   rotation (`OpenOptions::new().create(true).append(true)`, no
+   `write(true)`, no `seek`, no `truncate`). Two-writer append test
+   pins the invariant. Every Propose / Confirm / Kill event lands
+   in the day file.
+
+The architectural commitment: the gate chain is enforced at the
+Tauri command surface — the only surface a UI or LLM can reach —
+not just in the library. The Phase 1 review caught the library-
+exists-but-commands-bypass-it gap (`execution_commands.rs:111`); the
+sign-off depends on the wiring landing before any UI consumes the
+surface.
+
+### Privilege-escalation defenses (May 12 batch)
+
+Three structural defenses landed against IPC / page-script
+forgery of trade-relevant commands:
+
+- **`tv_cdp_eval` IPC gate** (`aed51f20`, `tradingview_cdp.rs:519`):
+  rejects callers where the calling-webview label is not `"main"`.
+  The WhiskeyMode tool-allowlist filters LLM tool calls but not raw
+  Tauri IPC; a child webview could otherwise `invoke('tv_cdp_eval',
+  { expression })` with arbitrary JS in TV's logged-in session.
+  Public command keeps the gate; the 5 internal callers route
+  through `tv_cdp_eval_internal` (`fa0e652e`,
+  `tradingview_cdp.rs:539`) which has no gate because it executes
+  hardcoded JS snippets, not caller-supplied expressions.
+- **Outbox nonce** (`6cc56c91`, `tv_overlay.rs`): 32-char hex per
+  injection session, IIFE-closure-scoped, never written to `window`.
+  Any TV-page script (Pine preview, future TV ads) can write to the
+  outbox, but Rust filters every entry whose `__nonce` doesn't
+  match. 8 unit tests on `filter_by_nonce`.
+- **Lockout server-gate** (`2b69ab6f`, `lockout.rs:224+`): two-step
+  Rust-enforced arm-then-reset protocol with a 300-second timer.
+  DevTools-console `invoke('lockout_reset')` can no longer bypass
+  the lockout; the trader must `arm_force_reset` and then wait 5
+  minutes of inactivity before `request_force_reset` will be
+  honored. The friction IS the discipline.
+
 ### Why the modes registry is a global RwLock
 
 The active mode is read on the LLM-request hot path. A read-write lock
@@ -372,6 +545,29 @@ Initial scope had it; user explicitly dropped it after learning the
 API requires a paid subscription on top of a $1k+ funded live account.
 The screen-watch path replaces it — works against any platform the
 user has on screen, no broker auth, manual-execute-only.
+
+### TOS posture (TradingView CDP usage)
+
+The TV CDP bridge attaches to a **user-launched** TradingView Desktop
+process the user already runs locally. The bridge:
+
+- Never logs into TV programmatically. The user authenticates once
+  in the TV Desktop app the normal way.
+- Never scrapes the public web property `tradingview.com` — the CDP
+  attach target is the desktop Electron app's debug port, not a
+  remote URL.
+- Never executes trades through TV. The Whiskey covenant is
+  never-execute on the LLM side; the (in-flight) execution layer
+  targets the broker's official API (TopStepX with `isAutomated:
+  true`), not TV.
+- Uses CDP for the operations a power-user would do by hand:
+  switching symbols, drawing SL/TP on the chart, reading chart
+  state for the LLM, overlaying a Whiskey panel inside the TV
+  window. Auto-attach is opt-in via the settings toggle
+  (`/settings/tks-mods` → TV bridge card).
+- Gates eval-arbitrary-JS strictly: `tv_cdp_eval` is rejected from
+  any webview other than `"main"`; injected panel JS uses a
+  per-session nonce to prevent forgery from TV-page scripts.
 
 ## Build commands
 
