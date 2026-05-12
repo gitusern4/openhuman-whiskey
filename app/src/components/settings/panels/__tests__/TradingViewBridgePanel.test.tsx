@@ -80,7 +80,13 @@ describe('TradingViewBridgePanel', () => {
       if (cmd === 'tv_cdp_probe') return REACHABLE_PROBE;
       // Handle commands the panel calls automatically that this test doesn't assert on
       if (cmd === 'tv_cdp_get_auto_attach_status') {
-        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+        return {
+          enabled: false,
+          attached: false,
+          last_event: null,
+          last_event_at: null,
+          retry_count: 0,
+        };
       }
       if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
@@ -98,7 +104,13 @@ describe('TradingViewBridgePanel', () => {
       if (cmd === 'tv_cdp_probe') return UNREACHABLE_PROBE;
       // Handle commands the panel calls automatically that this test doesn't assert on
       if (cmd === 'tv_cdp_get_auto_attach_status') {
-        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+        return {
+          enabled: false,
+          attached: false,
+          last_event: null,
+          last_event_at: null,
+          retry_count: 0,
+        };
       }
       if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
@@ -116,7 +128,13 @@ describe('TradingViewBridgePanel', () => {
       if (cmd === 'tv_cdp_probe') return UNREACHABLE_PROBE;
       // Handle commands the panel calls automatically that this test doesn't assert on
       if (cmd === 'tv_cdp_get_auto_attach_status') {
-        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+        return {
+          enabled: false,
+          attached: false,
+          last_event: null,
+          last_event_at: null,
+          retry_count: 0,
+        };
       }
       if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
@@ -136,7 +154,13 @@ describe('TradingViewBridgePanel', () => {
       if (cmd === 'tv_cdp_attach') return REACHABLE_PROBE;
       // Handle commands the panel calls automatically that this test doesn't assert on
       if (cmd === 'tv_cdp_get_auto_attach_status') {
-        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+        return {
+          enabled: false,
+          attached: false,
+          last_event: null,
+          last_event_at: null,
+          retry_count: 0,
+        };
       }
       if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
@@ -161,7 +185,13 @@ describe('TradingViewBridgePanel', () => {
       if (cmd === 'tv_cdp_get_chart_state') return FIXTURE_CHART_STATE;
       // Handle commands the panel calls automatically that this test doesn't assert on
       if (cmd === 'tv_cdp_get_auto_attach_status') {
-        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+        return {
+          enabled: false,
+          attached: false,
+          last_event: null,
+          last_event_at: null,
+          retry_count: 0,
+        };
       }
       if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
@@ -195,7 +225,13 @@ describe('TradingViewBridgePanel', () => {
       }
       // Handle commands the panel calls automatically that this test doesn't assert on
       if (cmd === 'tv_cdp_get_auto_attach_status') {
-        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+        return {
+          enabled: false,
+          attached: false,
+          last_event: null,
+          last_event_at: null,
+          retry_count: 0,
+        };
       }
       if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
@@ -230,7 +266,13 @@ describe('TradingViewBridgePanel', () => {
       }
       // Handle commands the panel calls automatically that this test doesn't assert on
       if (cmd === 'tv_cdp_get_auto_attach_status') {
-        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+        return {
+          enabled: false,
+          attached: false,
+          last_event: null,
+          last_event_at: null,
+          retry_count: 0,
+        };
       }
       if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
@@ -262,7 +304,13 @@ describe('TradingViewBridgePanel', () => {
       }
       // Handle commands the panel calls automatically that this test doesn't assert on
       if (cmd === 'tv_cdp_get_auto_attach_status') {
-        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+        return {
+          enabled: false,
+          attached: false,
+          last_event: null,
+          last_event_at: null,
+          retry_count: 0,
+        };
       }
       if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
@@ -291,7 +339,13 @@ describe('TradingViewBridgePanel', () => {
       }
       // Handle commands the panel calls automatically that this test doesn't assert on
       if (cmd === 'tv_cdp_get_auto_attach_status') {
-        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+        return {
+          enabled: false,
+          attached: false,
+          last_event: null,
+          last_event_at: null,
+          retry_count: 0,
+        };
       }
       if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
@@ -314,7 +368,13 @@ describe('TradingViewBridgePanel', () => {
       if (cmd === 'tv_cdp_detach') return undefined;
       // Handle commands the panel calls automatically that this test doesn't assert on
       if (cmd === 'tv_cdp_get_auto_attach_status') {
-        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+        return {
+          enabled: false,
+          attached: false,
+          last_event: null,
+          last_event_at: null,
+          retry_count: 0,
+        };
       }
       if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
@@ -344,7 +404,13 @@ describe('TradingViewBridgePanel', () => {
       }
       // Handle commands the panel calls automatically that this test doesn't assert on
       if (cmd === 'tv_cdp_get_auto_attach_status') {
-        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+        return {
+          enabled: false,
+          attached: false,
+          last_event: null,
+          last_event_at: null,
+          retry_count: 0,
+        };
       }
       if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
@@ -367,7 +433,13 @@ describe('TradingViewBridgePanel', () => {
       if (cmd === 'tv_cdp_attach') return REACHABLE_PROBE;
       // Handle commands the panel calls automatically that this test doesn't assert on
       if (cmd === 'tv_cdp_get_auto_attach_status') {
-        return { enabled: false, attached: false, last_event: null, last_event_at: null, retry_count: 0 };
+        return {
+          enabled: false,
+          attached: false,
+          last_event: null,
+          last_event_at: null,
+          retry_count: 0,
+        };
       }
       if (cmd === 'tv_cdp_set_auto_attach') return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
