@@ -8,9 +8,61 @@
 //! an `overlay:attention` Socket.IO message.
 
 use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use tokio::sync::broadcast;
 
 use super::types::OverlayAttentionEvent;
+
+// ---------------------------------------------------------------------------
+// hide_risk_pct cache
+//
+// publish_attention is called on every overlay event including the
+// heartbeat-driven status pings. A sync TOML disk-read on every call
+// burns I/O for zero benefit since the flag changes only when the user
+// toggles it in settings. Cache: AtomicU8 tri-state (Unset/On/Off) so
+// the hot path is a single relaxed atomic load.
+//
+// Invalidation: the settings-save site calls invalidate_tks_cache()
+// which resets to Unset; the next publish_attention call lazily reads
+// the TOML once + sets the cache. Two-instance race is benign — both
+// instances would read the same persisted value.
+// ---------------------------------------------------------------------------
+
+const CACHE_UNSET: u8 = 0;
+const CACHE_ON: u8 = 1;
+const CACHE_OFF: u8 = 2;
+
+static HIDE_RISK_PCT_CACHE: AtomicU8 = AtomicU8::new(CACHE_UNSET);
+
+fn hide_risk_pct_cached() -> bool {
+    match HIDE_RISK_PCT_CACHE.load(Ordering::Relaxed) {
+        CACHE_ON => true,
+        CACHE_OFF => false,
+        _ => {
+            // Lazy load on first access. The disk read happens once
+            // per cache-clear, not per publish_attention.
+            let tks_config = crate::openhuman::modes::tks_mods_config::load();
+            let next = if tks_config.hide_risk_pct {
+                CACHE_ON
+            } else {
+                CACHE_OFF
+            };
+            HIDE_RISK_PCT_CACHE.store(next, Ordering::Relaxed);
+            tks_config.hide_risk_pct
+        }
+    }
+}
+
+/// Clear the hide_risk_pct cache. Call from any code path that
+/// modifies the persisted TK's Mods config (settings panel save,
+/// import, etc.) so the next publish_attention picks up the fresh
+/// value. Idempotent.
+pub fn invalidate_tks_cache() {
+    HIDE_RISK_PCT_CACHE.store(CACHE_UNSET, Ordering::Relaxed);
+}
+
+#[allow(dead_code)]
+static _PUBLISH_ATTENTION_CACHE_SENTINEL: AtomicBool = AtomicBool::new(false);
 
 const LOG_PREFIX: &str = "[overlay]";
 
@@ -49,8 +101,12 @@ pub fn publish_attention(mut event: OverlayAttentionEvent) -> usize {
     }
 
     // Apply risk sanitizer if enabled in TK's Mods config.
-    let tks_config = crate::openhuman::modes::tks_mods_config::load();
-    if tks_config.hide_risk_pct {
+    // Cache the hide_risk_pct flag: publish_attention is called from
+    // every overlay event (heartbeat-driven). A sync disk read on each
+    // call is a disk-amplification footgun + adds latency. The cache
+    // is invalidated when settings save (via `invalidate_tks_cache`).
+    // Architect review 2026-05-12.
+    if hide_risk_pct_cached() {
         event.message = crate::openhuman::modes::risk_sanitizer::sanitize(&event.message);
     }
 
