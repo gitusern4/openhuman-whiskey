@@ -25,6 +25,13 @@ const STATE_FILE: &str = "tks_mods.toml";
 /// Env-var override so unit tests can redirect the file to a temp dir.
 const TEST_OVERRIDE_ENV: &str = "OPENHUMAN_TKS_MODS_FILE";
 
+/// One item in the pre-trade checklist.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChecklistItem {
+    pub id: String,
+    pub label: String,
+}
+
 /// The persisted TK's Mods configuration record.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TksModsConfig {
@@ -36,6 +43,40 @@ pub struct TksModsConfig {
     /// sanitizer before reaching the overlay / chat UI.
     #[serde(default)]
     pub hide_risk_pct: bool,
+
+    /// Pre-trade checklist items persisted across restarts.
+    /// Defaults to the five Whiskey-recommended checks.
+    #[serde(default = "default_checklist")]
+    pub pretrade_checklist: Vec<ChecklistItem>,
+
+    /// Favorite symbols (max 20). Clicking one calls `tv_cdp_set_symbol`.
+    #[serde(default)]
+    pub symbol_favorites: Vec<String>,
+}
+
+fn default_checklist() -> Vec<ChecklistItem> {
+    vec![
+        ChecklistItem {
+            id: "catalog-match".to_string(),
+            label: "Catalog match confirmed (A+ setup in playbook)".to_string(),
+        },
+        ChecklistItem {
+            id: "stop-defined".to_string(),
+            label: "Stop price defined".to_string(),
+        },
+        ChecklistItem {
+            id: "size-calculated".to_string(),
+            label: "Position size calculated".to_string(),
+        },
+        ChecklistItem {
+            id: "risk-budget".to_string(),
+            label: "Risk fits daily budget".to_string(),
+        },
+        ChecklistItem {
+            id: "no-revenge".to_string(),
+            label: "Not revenge trading (>15min since last loss)".to_string(),
+        },
+    ]
 }
 
 fn default_theme() -> String {
@@ -47,6 +88,8 @@ impl Default for TksModsConfig {
         Self {
             theme: default_theme(),
             hide_risk_pct: false,
+            pretrade_checklist: default_checklist(),
+            symbol_favorites: Vec::new(),
         }
     }
 }
@@ -150,6 +193,8 @@ mod tests {
         let cfg = TksModsConfig {
             theme: "zeth".to_string(),
             hide_risk_pct: true,
+            pretrade_checklist: default_checklist(),
+            symbol_favorites: vec![],
         };
         save(&cfg);
         assert!(path.exists());

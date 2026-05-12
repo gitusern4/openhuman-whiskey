@@ -198,14 +198,11 @@ const aiModelsSettingsItems = [
     ),
   },
   {
-    // Whiskey fork — agent-mode picker. Lets the user switch the
-    // active persona (Default vs. Whiskey trading mentor). Wires to
-    // the Tauri commands list_whiskey_modes / set_whiskey_mode /
-    // get_active_whiskey_mode_id which bridge to the in-process
-    // `crate::openhuman::modes::registry`.
+    // Whiskey fork — agent-mode picker (deprecated nav entry; canonical
+    // UX is via TK's Mods → AI Mode section).
     id: 'modes',
     title: 'Modes',
-    description: 'Switch between agent personas (Default, Whiskey trading mentor, …)',
+    description: "→ moved to TK's Mods. Switch between agent personas (Default, Whiskey, …)",
     route: 'modes',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -219,11 +216,12 @@ const aiModelsSettingsItems = [
     ),
   },
   {
-    // Whiskey fork — TK's Mods. Theme picker (ZETH), SL/TP overlay, and
-    // risk-display toggle.
+    // Whiskey fork — TK's Mods. All trading mods in one place: AI mode,
+    // TV bridge, SL/TP overlay, position sizer, pre-trade checklist,
+    // symbol favorites, walk-away lockout, theme, risk-hide.
     id: 'tks-mods',
     title: "TK's Mods",
-    description: 'Themes, SL/TP overlay, and risk-display preferences.',
+    description: 'All trading mods: TV bridge, position sizer, checklist, lockout, theme.',
     route: 'tks-mods',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -237,14 +235,11 @@ const aiModelsSettingsItems = [
     ),
   },
   {
-    // Whiskey fork — TradingView Desktop CDP bridge. Attaches to
-    // TradingView Desktop's renderer via Chrome DevTools Protocol so
-    // Whiskey can read live chart state (symbol, timeframe, indicator
-    // values, alerts) and write back. See `tradingview_cdp.rs` for
-    // setup story; user must launch TV with `--remote-debugging-port=9222`.
+    // Whiskey fork — TradingView Desktop CDP bridge (deprecated nav entry;
+    // canonical UX is via TK's Mods → TradingView Bridge section).
     id: 'tradingview-bridge',
     title: 'TradingView bridge',
-    description: 'Attach Whiskey to TradingView Desktop via Chrome DevTools Protocol',
+    description: "→ moved to TK's Mods. Attach Whiskey to TradingView Desktop via CDP.",
     route: 'tradingview-bridge',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
