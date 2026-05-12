@@ -35,11 +35,7 @@ const REACHABLE_PROBE = {
   port: 9222,
   browser_ws_url: 'ws://127.0.0.1:9222/devtools/browser/abc',
   tv_targets: [
-    {
-      id: 'target-1',
-      url: 'https://www.tradingview.com/chart/abc/',
-      title: 'NQ — TradingView',
-    },
+    { id: 'target-1', url: 'https://www.tradingview.com/chart/abc/', title: 'NQ — TradingView' },
   ],
   error: null,
 };
@@ -211,8 +207,6 @@ describe('TradingViewBridgePanel', () => {
     const portInput = screen.getByTestId('tv-bridge-port-input') as HTMLInputElement;
     fireEvent.change(portInput, { target: { value: '9333' } });
     fireEvent.click(screen.getByTestId('tv-bridge-probe-button'));
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith('tv_cdp_probe', { port: 9333 })
-    );
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('tv_cdp_probe', { port: 9333 }));
   });
 });
