@@ -52,9 +52,7 @@ fn install_handler(app: &AppHandle<AppRuntime>, binding: &str) -> Result<(), Str
             // binding requires Shift+Space so volume is low, but a user
             // who rebinds to a single key would otherwise spam logs.
             // WHISKEY_AUDIT.md L6.
-            log::debug!(
-                "[mascot-hotkey] {binding_for_log:?} pressed — toggling mascot visibility"
-            );
+            log::debug!("[mascot-hotkey] {binding_for_log:?} pressed — toggling mascot visibility");
             toggle_mascot(&app_clone);
         })
         .map_err(|e| format!("Failed to register shortcut '{binding}': {e}"))
@@ -294,7 +292,7 @@ fn mascot_is_open(app: &AppHandle<AppRuntime>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_MASCOT_SUMMON_BINDING, MascotSummonHotkeyState};
+    use super::{MascotSummonHotkeyState, DEFAULT_MASCOT_SUMMON_BINDING};
     use crate::dictation_hotkeys::expand_dictation_shortcuts;
     use std::sync::Mutex;
 
