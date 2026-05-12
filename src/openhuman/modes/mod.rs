@@ -37,6 +37,7 @@
 pub mod default;
 pub mod lockout;
 pub mod memory_cache;
+pub mod onboarding;
 pub mod persistence;
 pub mod position_sizer;
 pub mod registry;
