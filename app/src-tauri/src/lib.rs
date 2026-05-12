@@ -3,7 +3,6 @@ compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supp
 
 mod cdp;
 // Whiskey fork — order-flow Rust + Tauri command layer.
-mod order_flow_commands;
 #[cfg(target_os = "macos")]
 mod cef_preflight;
 mod cef_profile;
@@ -17,6 +16,7 @@ mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
+mod order_flow_commands;
 // Whiskey fork — global hotkey to summon/hide the mascot from any
 // foreground app (default CmdOrCtrl+Shift+Space). Cross-platform; the
 // per-OS dispatch lives in `mascot_window_show` / `_hide` in this file.
@@ -969,6 +969,15 @@ fn lockout_set_config(
     state.config.cooldown_minutes = cooldown_minutes;
     openhuman_core::openhuman::modes::lockout::save(&state);
     openhuman_core::openhuman::modes::lockout::status(&state)
+}
+
+/// TK's Mods — invalidate the `hide_risk_pct` overlay-bus cache so the
+/// next `publish_attention` call re-reads from TOML. Call after every
+/// settings save that touches `tks_mods_config`. Without this the
+/// risk-sanitizer cache stays stale until next app restart.
+#[tauri::command]
+fn tks_mods_invalidate_cache() {
+    openhuman_core::openhuman::overlay::bus::invalidate_tks_cache();
 }
 
 /// Whiskey fork — first-run onboarding status.
@@ -2214,6 +2223,7 @@ pub fn run() {
             lockout_arm_reset,
             lockout_reset,
             lockout_set_config,
+            tks_mods_invalidate_cache,
             // Order-flow — config, bar recording, tagging, preset apply.
             order_flow_commands::order_flow_get_config,
             order_flow_commands::order_flow_set_config,

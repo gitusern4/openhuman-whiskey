@@ -129,6 +129,11 @@ pub struct LockoutStatus {
     pub daily_loss_dollars: f64,
     pub consecutive_losses: u32,
     pub config: LockoutConfig,
+    /// Unix timestamp until which the arm-reset cooldown is active.
+    /// `None` means no reset is armed. When `Some(t)` and `t > now`,
+    /// the cooldown is still running; when `t <= now`, the reset can
+    /// be confirmed.
+    pub armed_for_reset_until: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +341,7 @@ pub fn status(state: &LockoutState) -> LockoutStatus {
         daily_loss_dollars: state.daily_loss_dollars,
         consecutive_losses: state.consecutive_losses,
         config: state.config.clone(),
+        armed_for_reset_until: state.armed_for_reset_until,
     }
 }
 
