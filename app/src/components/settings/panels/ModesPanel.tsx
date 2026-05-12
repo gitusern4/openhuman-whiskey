@@ -29,6 +29,22 @@ export interface ModeDescriptor {
   description: string;
 }
 
+/**
+ * Cheap client-side sanity check on a global-shortcut string before we
+ * round-trip to the Tauri plugin (WHISKEY_AUDIT.md L8). The plugin's
+ * own validator is canonical — this just spares the user a round-trip
+ * for obvious garbage like "asdf". A valid Tauri global shortcut needs
+ * either a modifier-prefixed key (contains "+") or a function key
+ * (F1–F24). Anything else (a single letter, a punctuation char) is
+ * almost certainly a typo.
+ */
+const looksLikeValidShortcut = (s: string): boolean => {
+  const t = s.trim();
+  if (t.length === 0) return false;
+  if (t.includes('+')) return true;
+  return /^F([1-9]|1\d|2[0-4])$/i.test(t);
+};
+
 const ModesPanel = () => {
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const [modes, setModes] = useState<ModeDescriptor[]>([]);
@@ -92,6 +108,13 @@ const ModesPanel = () => {
     const next = hotkeyDraft.trim();
     if (next.length === 0) {
       setHotkeyError('Mascot summon hotkey cannot be empty.');
+      return;
+    }
+    if (!looksLikeValidShortcut(next)) {
+      setHotkeyError(
+        `"${next}" doesn't look like a valid shortcut. ` +
+          'Use a modifier-prefixed combo (e.g. "CmdOrCtrl+Shift+Space") or a function key (F1–F24).'
+      );
       return;
     }
     setHotkeyPending(true);
@@ -241,7 +264,7 @@ const ModesPanel = () => {
             <button
               type="button"
               onClick={() => void saveHotkey()}
-              disabled={hotkeyPending || hotkeyDraft.trim().length === 0}
+              disabled={hotkeyPending || !looksLikeValidShortcut(hotkeyDraft)}
               data-testid="mascot-summon-hotkey-save"
               className="shrink-0 rounded-md bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:bg-stone-300 disabled:cursor-not-allowed">
               {hotkeyPending ? 'Saving…' : 'Save'}

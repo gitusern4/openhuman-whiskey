@@ -35,10 +35,12 @@ pub fn build_evaluation_prompt(
     let upstream_preamble = "# Subconscious Loop — Task Evaluation\n\n\
         You are the background awareness layer. You run periodically to evaluate\n\
         user-defined tasks against the current workspace state.";
-    let preamble: String = match (mode.heartbeat_prompt_override(), upstream_preamble) {
-        (Some(custom), _) => custom.to_string(),
-        (None, upstream) => upstream.to_string(),
-    };
+    // WHISKEY_AUDIT.md L7: prefer the active mode's heartbeat override
+    // when present, otherwise fall back to the upstream preamble.
+    let preamble: String = mode
+        .heartbeat_prompt_override()
+        .map(str::to_string)
+        .unwrap_or_else(|| upstream_preamble.to_string());
 
     format!(
         r#"{identity_context}

@@ -498,10 +498,20 @@ mod tests {
                 resolved.display()
             );
         } else {
-            // Otherwise we should be on the openhuman fallback.
+            // Otherwise we should be on the openhuman fallback. Pin
+            // both the parent (must contain `.openhuman`) AND the leaf
+            // (must be `whiskey_memory`) so a future refactor that
+            // returns `~/.openhuman` (no subdir) or some unrelated leaf
+            // is caught here. WHISKEY_AUDIT.md L5.
             assert!(
                 s.contains("openhuman") || s.contains(".openhuman"),
                 "expected openhuman fallback, got {}",
+                resolved.display()
+            );
+            assert_eq!(
+                resolved.file_name().and_then(|n| n.to_str()),
+                Some("whiskey_memory"),
+                "expected leaf `whiskey_memory`, got {}",
                 resolved.display()
             );
         }

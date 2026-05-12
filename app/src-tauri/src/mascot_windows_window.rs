@@ -13,6 +13,11 @@
 //! feedback). A native Win32 layered window + WebView2 fallback is the
 //! Phase-2 fix if transparency does not come through.
 //!
+//! TODO(WHISKEY_AUDIT.md L4): file an upstream issue against tauri-cef
+//! for transparent windowed-mode on Windows once the v1 ARM64 build
+//! is shipping; until then this comment is the tracking surface so
+//! the limitation isn't lost when the file changes.
+//!
 //! API mirrors `mascot_native_window`:
 //!   - `show(app)` — create or focus the floating window
 //!   - `hide()` — close + destroy
