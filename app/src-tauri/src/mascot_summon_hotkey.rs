@@ -73,7 +73,7 @@ pub(crate) fn register_default(app: &AppHandle<AppRuntime>) {
     }
 
     let state = app.state::<MascotSummonHotkeyState>();
-    let mut guard = state.0.lock().unwrap();
+    let mut guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
 
     for binding in &bindings {
         match install_handler(app, binding.as_str()) {
@@ -101,7 +101,7 @@ pub(crate) async fn register(app: AppHandle<AppRuntime>, shortcut: String) -> Re
 
     let old_shortcuts = {
         let state = app.state::<MascotSummonHotkeyState>();
-        let guard = state.0.lock().unwrap();
+        let guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
         guard.clone()
     };
 
@@ -157,7 +157,7 @@ pub(crate) async fn register(app: AppHandle<AppRuntime>, shortcut: String) -> Re
 
     {
         let state = app.state::<MascotSummonHotkeyState>();
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
         *guard = expanded_shortcuts.clone();
     }
 
@@ -173,7 +173,7 @@ pub(crate) async fn register(app: AppHandle<AppRuntime>, shortcut: String) -> Re
 pub(crate) async fn unregister_all(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[mascot-hotkey] unregister_all: called");
     let state = app.state::<MascotSummonHotkeyState>();
-    let mut guard = state.0.lock().unwrap();
+    let mut guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
     if guard.is_empty() {
         log::debug!("[mascot-hotkey] no shortcut registered — nothing to unregister");
         return Ok(());
@@ -274,15 +274,15 @@ mod tests {
     fn state_starts_empty_and_accepts_inserts() {
         let state = MascotSummonHotkeyState(Mutex::new(Vec::new()));
         {
-            let guard = state.0.lock().unwrap();
+            let guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
             assert!(guard.is_empty(), "fresh state should be empty");
         }
         {
-            let mut guard = state.0.lock().unwrap();
+            let mut guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
             guard.push("Ctrl+Shift+Space".to_string());
             guard.push("Cmd+Shift+Space".to_string());
         }
-        let guard = state.0.lock().unwrap();
+        let guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(guard.len(), 2);
         assert!(guard.contains(&"Ctrl+Shift+Space".to_string()));
     }
@@ -294,11 +294,11 @@ mod tests {
             "Cmd+Shift+Space".to_string(),
         ]));
         {
-            let mut guard = state.0.lock().unwrap();
+            let mut guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
             assert_eq!(guard.len(), 2);
             guard.clear();
         }
-        let guard = state.0.lock().unwrap();
+        let guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
         assert!(guard.is_empty(), "state should be empty after clear");
     }
 

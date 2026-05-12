@@ -14,14 +14,25 @@
 //! without rewriting domain code.
 //!
 //! Wired into:
-//!   - `providers::router` — `system_prompt_prefix()` is prepended to every
-//!     outgoing LLM request when a non-default mode is active.
-//!   - `learning::reflection` — `reflection_prompt_override()` swaps the
-//!     reflection-hook prompt.
-//!   - `heartbeat::engine` — `heartbeat_prompt_override()` swaps the
-//!     periodic-reflection prompt.
-//!   - `memory::ingestion` — `additional_memory_roots()` add extra
-//!     `.md`-vault paths to the boot ingestion sweep.
+//!   - `providers::router` — `system_prompt_prefix()` is prepended to
+//!     every outgoing LLM request when a non-default mode is active,
+//!     across `chat_with_system`, `chat`, `chat_with_history`, and
+//!     `chat_with_tools` (the agent-loop paths). See WHISKEY_AUDIT.md
+//!     C1 for the bug that landed when only `chat_with_system` was
+//!     wired.
+//!   - `learning::reflection` — `reflection_prompt_override()` swaps
+//!     the reflection-hook prompt's preamble.
+//!   - `subconscious::prompt::build_evaluation_prompt` —
+//!     `heartbeat_prompt_override()` swaps the periodic-reflection
+//!     prompt's preamble. (`heartbeat::engine` itself doesn't build
+//!     prompts; it delegates to `subconscious::engine.tick()` which
+//!     calls into the prompt builder.)
+//!   - `modes::memory_cache::resolve` — `additional_memory_roots()`
+//!     are walked for `.md` files which are mtime-cached and folded
+//!     into the persona-memory block included in every LLM system
+//!     prompt. The roots are NOT yet ingested into the global Memory
+//!     Tree (see WHISKEY_AUDIT.md H4). When that ingestion lands the
+//!     same root list will feed both paths.
 
 pub mod default;
 pub mod memory_cache;

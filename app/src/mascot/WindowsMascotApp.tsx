@@ -5,6 +5,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { type MascotFace, YellowMascot } from '../features/human/Mascot';
 
 /**
+ * Trailing-edge debounce on `tauri://move` so a single drag fires one
+ * disk write instead of dozens. WHISKEY_AUDIT.md H2: dragging the
+ * mascot generated a hot disk-write loop because the `tauri://move`
+ * event fires per-pixel during a drag and the previous handler
+ * invoked the save command on every fire. 300 ms feels instant but
+ * cleanly batches a continuous drag into one save.
+ */
+const SAVE_POSITION_DEBOUNCE_MS = 300;
+
+/**
  * Hosted in a Tauri WebviewWindow created by `mascot_windows_window.rs`
  * on Windows. The window is built with `transparent + always_on_top +
  * decorations(false) + skip_taskbar`.
@@ -37,19 +47,35 @@ const WindowsMascotApp = () => {
 
   /**
    * Persist the window's current position. Fires on Tauri's
-   * `tauri://move` event after the user finishes dragging — that's
-   * the canonical drag-end signal.
+   * `tauri://move` event during/after a drag. WHISKEY_AUDIT.md H2:
+   * `tauri://move` fires on every position change during a drag (tens
+   * to hundreds per second), so the call has to be debounced — without
+   * the timer below the previous implementation hammered the disk
+   * with `mascot_windows_state.toml` writes for every pixel of a drag.
+   *
+   * `useRef<number | null>` instead of `useState` because the timer
+   * id is implementation detail; flipping React state on every pointer
+   * tick would itself defeat the purpose.
    */
+  const savePositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savePosition = useCallback(() => {
     if (!isTauri()) return;
-    invoke('mascot_window_save_position').catch(err => {
-      console.warn('[mascot-win] save position failed', err);
-    });
+    if (savePositionTimerRef.current !== null) {
+      clearTimeout(savePositionTimerRef.current);
+    }
+    savePositionTimerRef.current = setTimeout(() => {
+      savePositionTimerRef.current = null;
+      invoke('mascot_window_save_position').catch(err => {
+        console.warn('[mascot-win] save position failed', err);
+      });
+    }, SAVE_POSITION_DEBOUNCE_MS);
   }, []);
 
   /**
    * Subscribe to the window's `tauri://move` event so any drag (mouse
-   * or programmatic) ends in a position save.
+   * or programmatic) eventually saves the resting position. Cleanup
+   * also flushes any pending debounce timer so an unmount mid-drag
+   * doesn't leak a callback that runs against a torn-down isTauri.
    */
   useEffect(() => {
     if (!isTauri()) return;
@@ -66,6 +92,10 @@ const WindowsMascotApp = () => {
       });
     return () => {
       if (unlisten) unlisten();
+      if (savePositionTimerRef.current !== null) {
+        clearTimeout(savePositionTimerRef.current);
+        savePositionTimerRef.current = null;
+      }
     };
   }, [savePosition]);
 

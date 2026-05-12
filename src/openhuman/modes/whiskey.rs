@@ -292,16 +292,31 @@ unrelated to this user's playbook + covenant. If the turn was off-topic,
 return all-empty arrays.
 "#;
 
+// WHISKEY_AUDIT.md H5: the previous version of this prompt instructed
+// the model to "scan recent screen_intelligence snapshots" — but the
+// Windows screen_intelligence engine is a documented stub that returns
+// `NotImplementedYet` and produces zero snapshots. LLMs faced with
+// "scan X for Y" and no X reliably hallucinate Y, so the rewritten
+// prompt below grounds the heartbeat strictly in Memory Tree state +
+// the user's curated playbook files, both of which actually exist.
+// When the screen-watch engine ships, restore the screen_intelligence
+// reference here.
 const WHISKEY_HEARTBEAT_PROMPT: &str = r#"Periodic background reflection while Whiskey mode is active.
-Scan recent screen_intelligence snapshots and Memory Tree updates for:
-1. New trades the screen-watch detected that have not yet been logged
-   to whiskey_playbook.md.
-2. Open positions that have been held past their planned exit time.
-3. Pattern_log.md categories that look likely to fire in the next 30
-   minutes given current behaviour.
-Emit a short overlay-attention message ONLY for tier-1 (un-logged trades
-that need logging now) or tier-3 (active pattern with high probability).
-Stay silent otherwise. Never alert just to be helpful.
+Look ONLY at the user's existing playbook files (whiskey_playbook.md,
+pattern_log.md, trade_log.md) and any new Memory Tree updates since the
+last heartbeat. Do not invent screen-state, position data, or fills —
+when no source confirms a fact, omit it.
+
+Surface ONLY:
+1. Pattern_log.md categories that look likely to fire in the next 30
+   minutes given the most recent reflections in user_reflections /
+   conversations memory (cite the specific reflection).
+2. A+ catalog setups in whiskey_playbook.md that the user has noted
+   matching market conditions for, and that have not yet been entered
+   in this session (cite the specific catalog entry by ID).
+Emit a short overlay-attention message ONLY when one of those two
+conditions has clear, source-cited evidence. Stay silent otherwise.
+Never alert just to be helpful. Never report on data you cannot cite.
 "#;
 
 #[cfg(test)]
