@@ -20,6 +20,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use super::order_flow::OrderFlowConfig;
+
 const STATE_FILE: &str = "tks_mods.toml";
 
 /// Env-var override so unit tests can redirect the file to a temp dir.
@@ -52,6 +54,11 @@ pub struct TksModsConfig {
     /// Favorite symbols (max 20). Clicking one calls `tv_cdp_set_symbol`.
     #[serde(default)]
     pub symbol_favorites: Vec<String>,
+
+    /// Order-flow feature flags and thresholds.
+    /// Conservative defaults: manual delta tracker on, all alerts off.
+    #[serde(default)]
+    pub order_flow: OrderFlowConfig,
 }
 
 fn default_checklist() -> Vec<ChecklistItem> {
@@ -90,6 +97,7 @@ impl Default for TksModsConfig {
             hide_risk_pct: false,
             pretrade_checklist: default_checklist(),
             symbol_favorites: Vec::new(),
+            order_flow: OrderFlowConfig::default(),
         }
     }
 }

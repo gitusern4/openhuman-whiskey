@@ -2,6 +2,8 @@
 compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supported.");
 
 mod cdp;
+// Whiskey fork — order-flow Rust + Tauri command layer.
+mod order_flow_commands;
 #[cfg(target_os = "macos")]
 mod cef_preflight;
 mod cef_profile;
@@ -1610,6 +1612,9 @@ pub fn run() {
     let builder = builder.manage(std::sync::Arc::new(
         tv_cdp_supervisor::TvAutoAttachState::default(),
     ));
+    // Order-flow state (ring buffer + cumulative delta + tags). Config
+    // is loaded from tks_mods.toml on first access via OrderFlowStore::default().
+    let builder = builder.manage(order_flow_commands::OrderFlowStore::default());
     builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
@@ -2183,6 +2188,12 @@ pub fn run() {
             lockout_trip,
             lockout_reset,
             lockout_set_config,
+            // Order-flow — config, bar recording, tagging, preset apply.
+            order_flow_commands::order_flow_get_config,
+            order_flow_commands::order_flow_set_config,
+            order_flow_commands::order_flow_record_bar,
+            order_flow_commands::order_flow_tag_active_trade,
+            order_flow_commands::order_flow_apply_preset,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
             meet_call::meet_call_open_window,
