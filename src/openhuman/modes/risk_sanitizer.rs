@@ -112,7 +112,10 @@ mod tests {
 
     #[test]
     fn dollar_amount_becomes_risk_unit() {
-        assert_eq!(sanitize("risking $250 on this trade"), "risking risk unit on this trade");
+        assert_eq!(
+            sanitize("risking $250 on this trade"),
+            "risking risk unit on this trade"
+        );
     }
 
     #[test]
@@ -122,7 +125,10 @@ mod tests {
 
     #[test]
     fn bare_percentage_becomes_a_portion() {
-        assert_eq!(sanitize("allocating 0.5% of capital"), "allocating a portion of capital");
+        assert_eq!(
+            sanitize("allocating 0.5% of capital"),
+            "allocating a portion of capital"
+        );
     }
 
     #[test]
@@ -141,12 +147,18 @@ mod tests {
     #[test]
     fn r_multiples_pass_through() {
         // "1.5R target" — R-multiples must never be stripped.
-        assert_eq!(sanitize("1.5R target is the plan"), "1.5R target is the plan");
+        assert_eq!(
+            sanitize("1.5R target is the plan"),
+            "1.5R target is the plan"
+        );
     }
 
     #[test]
     fn r_multiple_standalone() {
-        assert_eq!(sanitize("aiming for 2R on this one"), "aiming for 2R on this one");
+        assert_eq!(
+            sanitize("aiming for 2R on this one"),
+            "aiming for 2R on this one"
+        );
     }
 
     #[test]
