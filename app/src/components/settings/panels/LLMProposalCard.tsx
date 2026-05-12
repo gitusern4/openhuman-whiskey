@@ -22,11 +22,7 @@ interface Props {
   onOrderConfirmed?: (orderId: string) => void;
 }
 
-export default function LLMProposalCard({
-  context,
-  consecutiveLosses,
-  onOrderConfirmed,
-}: Props) {
+export default function LLMProposalCard({ context, consecutiveLosses, onOrderConfirmed }: Props) {
   const [proposal, setProposal] = useState<ProposalShape | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,9 +33,7 @@ export default function LLMProposalCard({
     setError(null);
     setProposal(null);
     try {
-      const result = await invoke<ProposalShape | null>('whiskey_propose_trade', {
-        context,
-      });
+      const result = await invoke<ProposalShape | null>('whiskey_propose_trade', { context });
       setProposal(result);
       if (!result) {
         setError('Whiskey did not generate a trade proposal for this context.');
@@ -69,8 +63,7 @@ export default function LLMProposalCard({
           cursor: loading ? 'wait' : 'pointer',
           fontWeight: 600,
           fontSize: '0.9rem',
-        }}
-      >
+        }}>
         {loading ? 'Whiskey thinking...' : 'Ask Whiskey: Should I take this trade?'}
       </button>
 
@@ -78,8 +71,7 @@ export default function LLMProposalCard({
         <div
           role="alert"
           data-testid="llm-proposal-error"
-          style={{ color: '#dc2626', fontSize: '0.82rem', marginTop: 6 }}
-        >
+          style={{ color: '#dc2626', fontSize: '0.82rem', marginTop: 6 }}>
           {error}
         </div>
       )}
@@ -93,18 +85,14 @@ export default function LLMProposalCard({
             border: '1px solid #bae6fd',
             borderRadius: 8,
             padding: 12,
-          }}
-        >
+          }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>
-            <span style={{ color: directionColor }}>
-              {proposal.action.toUpperCase()}
-            </span>{' '}
+            <span style={{ color: directionColor }}>{proposal.action.toUpperCase()}</span>{' '}
             {proposal.instrument} × {proposal.qty}
           </div>
           <div style={{ fontSize: '0.82rem', color: '#374151', marginBottom: 4 }}>
-            Stop: {proposal.stop_loss_ticks} ticks &bull; Target:{' '}
-            {proposal.take_profit_ticks} ticks &bull; R: $
-            {proposal.r_estimate_dollars.toFixed(2)}
+            Stop: {proposal.stop_loss_ticks} ticks &bull; Target: {proposal.take_profit_ticks} ticks
+            &bull; R: ${proposal.r_estimate_dollars.toFixed(2)}
           </div>
           <div style={{ fontSize: '0.82rem', color: '#374151', marginBottom: 8 }}>
             Confidence: {proposal.confidence_pct}%
@@ -126,8 +114,7 @@ export default function LLMProposalCard({
               cursor: 'pointer',
               fontWeight: 600,
               fontSize: '0.85rem',
-            }}
-          >
+            }}>
             Review Trade
           </button>
           <button
@@ -142,8 +129,7 @@ export default function LLMProposalCard({
               borderRadius: 5,
               cursor: 'pointer',
               fontSize: '0.85rem',
-            }}
-          >
+            }}>
             Pass
           </button>
         </div>
@@ -153,7 +139,7 @@ export default function LLMProposalCard({
         <ConfirmTradeDialog
           proposal={proposal}
           consecutiveLosses={consecutiveLosses}
-          onConfirmed={(id) => {
+          onConfirmed={id => {
             setShowConfirm(false);
             setProposal(null);
             onOrderConfirmed?.(id);

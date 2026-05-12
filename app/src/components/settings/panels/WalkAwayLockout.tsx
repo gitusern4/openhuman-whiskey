@@ -49,11 +49,8 @@ export default function WalkAwayLockout({ active, endsAtUnix }: Props) {
         padding: 16,
         textAlign: 'center',
         marginBottom: 12,
-      }}
-    >
-      <div
-        style={{ fontWeight: 700, color: '#dc2626', fontSize: '1rem', marginBottom: 4 }}
-      >
+      }}>
+      <div style={{ fontWeight: 700, color: '#dc2626', fontSize: '1rem', marginBottom: 4 }}>
         Walk Away — Take a Break
       </div>
       <div style={{ color: '#6b7280', fontSize: '0.85rem', marginBottom: 8 }}>
@@ -62,16 +59,17 @@ export default function WalkAwayLockout({ active, endsAtUnix }: Props) {
       {remaining > 0 && (
         <div
           data-testid="walk-away-countdown"
-          style={{ fontWeight: 700, fontSize: '2rem', color: '#dc2626', fontVariantNumeric: 'tabular-nums' }}
-        >
+          style={{
+            fontWeight: 700,
+            fontSize: '2rem',
+            color: '#dc2626',
+            fontVariantNumeric: 'tabular-nums',
+          }}>
           {formatRemaining(remaining)}
         </div>
       )}
       {remaining <= 0 && (
-        <div
-          data-testid="walk-away-done"
-          style={{ fontWeight: 600, color: '#16a34a' }}
-        >
+        <div data-testid="walk-away-done" style={{ fontWeight: 600, color: '#16a34a' }}>
           Lockout complete — proceed with intention.
         </div>
       )}

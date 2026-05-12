@@ -15,8 +15,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import DailyPnLGauge from '../src/components/settings/panels/DailyPnLGauge';
 import LossCounter from '../src/components/settings/panels/LossCounter';
-import WalkAwayLockout from '../src/components/settings/panels/WalkAwayLockout';
 import type { SessionState } from '../src/components/settings/panels/types';
+import WalkAwayLockout from '../src/components/settings/panels/WalkAwayLockout';
 
 vi.useFakeTimers();
 
@@ -73,9 +73,7 @@ describe('DailyPnLGauge', () => {
 
 describe('WalkAwayLockout', () => {
   it('renders nothing when not active', () => {
-    const { container } = render(
-      <WalkAwayLockout active={false} endsAtUnix={null} />,
-    );
+    const { container } = render(<WalkAwayLockout active={false} endsAtUnix={null} />);
     expect(container.firstChild).toBeNull();
   });
 

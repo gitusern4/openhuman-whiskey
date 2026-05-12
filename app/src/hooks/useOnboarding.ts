@@ -14,7 +14,6 @@
  * - `tvBridgeSkipped` is threaded through every step so the Done card can
  *   surface it in the summary.
  */
-
 import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -67,14 +66,17 @@ export function useOnboarding(): UseOnboardingReturn {
     };
   }, []);
 
-  const advance = useCallback((nextStep: number, tvSkipped = tvBridgeSkipped) => {
-    setStep(nextStep);
-    setTvBridgeSkipped(tvSkipped);
-    // Fire-and-forget — local state is already updated.
-    invoke('onboarding_advance', { step: nextStep, tvBridgeSkipped: tvSkipped }).catch(err =>
-      console.warn('[useOnboarding] onboarding_advance failed:', err)
-    );
-  }, [tvBridgeSkipped]);
+  const advance = useCallback(
+    (nextStep: number, tvSkipped = tvBridgeSkipped) => {
+      setStep(nextStep);
+      setTvBridgeSkipped(tvSkipped);
+      // Fire-and-forget — local state is already updated.
+      invoke('onboarding_advance', { step: nextStep, tvBridgeSkipped: tvSkipped }).catch(err =>
+        console.warn('[useOnboarding] onboarding_advance failed:', err)
+      );
+    },
+    [tvBridgeSkipped]
+  );
 
   const finish = useCallback((tvSkipped: boolean) => {
     setCompleted(true);

@@ -27,32 +27,22 @@ export default function DailyPnLGauge({ dailyPnl, dailyMaxLossUsd }: Props) {
           justifyContent: 'space-between',
           fontSize: '0.82rem',
           marginBottom: 4,
-        }}
-      >
+        }}>
         <span style={{ color: '#6b7280' }}>Daily P&amp;L</span>
         <span
           data-testid="daily-pnl-value"
-          style={{ fontWeight: 600, color: dailyPnl < 0 ? '#dc2626' : '#16a34a' }}
-        >
+          style={{ fontWeight: 600, color: dailyPnl < 0 ? '#dc2626' : '#16a34a' }}>
           ${dailyPnl.toFixed(2)} / -${dailyMaxLossUsd.toFixed(0)}
           {locked && (
             <span
               data-testid="daily-pnl-locked"
-              style={{ marginLeft: 6, color: '#dc2626', fontWeight: 700 }}
-            >
+              style={{ marginLeft: 6, color: '#dc2626', fontWeight: 700 }}>
               LOCKED
             </span>
           )}
         </span>
       </div>
-      <div
-        style={{
-          height: 8,
-          borderRadius: 4,
-          background: '#e5e7eb',
-          overflow: 'hidden',
-        }}
-      >
+      <div style={{ height: 8, borderRadius: 4, background: '#e5e7eb', overflow: 'hidden' }}>
         <div
           data-testid="daily-pnl-bar"
           style={{

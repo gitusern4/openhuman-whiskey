@@ -13,13 +13,11 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockInvoke = vi.fn();
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => mockInvoke(...args),
-}));
-
 import ConfirmTradeDialog from '../src/components/settings/panels/ConfirmTradeDialog';
 import type { ProposalShape } from '../src/components/settings/panels/ConfirmTradeDialog';
+
+const mockInvoke = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
 
 vi.useFakeTimers();
 
@@ -54,7 +52,7 @@ describe('ConfirmTradeDialog', () => {
         consecutiveLosses={0}
         onConfirmed={vi.fn()}
         onCancelled={vi.fn()}
-      />,
+      />
     );
     expect(screen.getByTestId('confirm-submit-button')).toBeDisabled();
   });
@@ -66,7 +64,7 @@ describe('ConfirmTradeDialog', () => {
         consecutiveLosses={0}
         onConfirmed={vi.fn()}
         onCancelled={vi.fn()}
-      />,
+      />
     );
     expect(screen.getByTestId('confirm-cancel-button')).not.toBeDisabled();
   });
@@ -78,7 +76,7 @@ describe('ConfirmTradeDialog', () => {
         consecutiveLosses={0}
         onConfirmed={vi.fn()}
         onCancelled={vi.fn()}
-      />,
+      />
     );
     expect(screen.getByTestId('confirm-submit-button')).toBeDisabled();
     act(() => vi.advanceTimersByTime(3500));
@@ -94,7 +92,7 @@ describe('ConfirmTradeDialog', () => {
         consecutiveLosses={2}
         onConfirmed={vi.fn()}
         onCancelled={vi.fn()}
-      />,
+      />
     );
     // Total countdown = 3 + 2 = 5 seconds
     expect(screen.getByTestId('confirm-countdown').textContent).toBe('5');
@@ -113,12 +111,10 @@ describe('ConfirmTradeDialog', () => {
         consecutiveLosses={0}
         onConfirmed={onConfirmed}
         onCancelled={vi.fn()}
-      />,
+      />
     );
     act(() => vi.advanceTimersByTime(4000));
-    await waitFor(() =>
-      expect(screen.getByTestId('confirm-submit-button')).not.toBeDisabled(),
-    );
+    await waitFor(() => expect(screen.getByTestId('confirm-submit-button')).not.toBeDisabled());
     await act(async () => {
       fireEvent.click(screen.getByTestId('confirm-submit-button'));
     });
@@ -138,7 +134,7 @@ describe('ConfirmTradeDialog', () => {
         consecutiveLosses={0}
         onConfirmed={vi.fn()}
         onCancelled={onCancelled}
-      />,
+      />
     );
     fireEvent.click(screen.getByTestId('confirm-cancel-button'));
     expect(onCancelled).toHaveBeenCalledOnce();
@@ -152,7 +148,7 @@ describe('ConfirmTradeDialog', () => {
         consecutiveLosses={0}
         onConfirmed={vi.fn()}
         onCancelled={vi.fn()}
-      />,
+      />
     );
     expect(screen.getByTestId('proposal-instrument').textContent).toBe('MES');
     expect(screen.getByTestId('proposal-direction').textContent).toBe('LONG');

@@ -71,8 +71,8 @@ const WelcomeStep = ({ onNext, onSkip }: WelcomeStepProps) => {
       <div>
         <p className="text-2xl font-semibold text-stone-900">Meet Whiskey</p>
         <p className="mt-2 text-sm text-stone-500">
-          Whiskey is your trading mentor — reads your A+ catalog and pattern log, scores setups,
-          and never executes trades. Start with the Default mode or activate Whiskey now.
+          Whiskey is your trading mentor — reads your A+ catalog and pattern log, scores setups, and
+          never executes trades. Start with the Default mode or activate Whiskey now.
         </p>
       </div>
 
@@ -83,9 +83,7 @@ const WelcomeStep = ({ onNext, onSkip }: WelcomeStepProps) => {
       )}
 
       <fieldset aria-label="Agent mode" className="flex flex-col gap-3">
-        {modes.length === 0 && !error && (
-          <p className="text-sm text-stone-400">Loading modes…</p>
-        )}
+        {modes.length === 0 && !error && <p className="text-sm text-stone-400">Loading modes…</p>}
         {modes.map(mode => (
           <div
             key={mode.id}

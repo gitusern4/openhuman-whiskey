@@ -12,7 +12,6 @@
  *   7. TvBridgeStep: Probe → reachable → Attach flow calls the right commands.
  *   8. DoneStep summary reflects mode and tvBridgeSkipped choices.
  */
-
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -34,10 +33,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
-  return {
-    ...actual,
-    useNavigate: () => mockNavigate,
-  };
+  return { ...actual, useNavigate: () => mockNavigate };
 });
 
 // ---------------------------------------------------------------------------

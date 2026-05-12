@@ -199,7 +199,7 @@ const TvBridgePanelBody = ({ onAttachedChange }: TvBridgePanelBodyProps) => {
       }
       setAutoStatus(s);
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---------------------------------------------------------------------------
@@ -223,8 +223,7 @@ const TvBridgePanelBody = ({ onAttachedChange }: TvBridgePanelBodyProps) => {
   const supervisorLabel = (() => {
     if (!autoAttach || !autoStatus?.enabled) return 'off';
     if (autoStatus.attached) return 'live';
-    if ((autoStatus.retry_count ?? 0) > 0)
-      return `retry ${autoStatus.retry_count}`;
+    if ((autoStatus.retry_count ?? 0) > 0) return `retry ${autoStatus.retry_count}`;
     return 'waiting';
   })();
 

@@ -87,14 +87,12 @@ export default function KillSwitchButton() {
   }, [resetPhrase, refreshStatus]);
 
   const canReset =
-    status.engaged &&
-    (status.seconds_until_reset === null || status.seconds_until_reset <= 0);
+    status.engaged && (status.seconds_until_reset === null || status.seconds_until_reset <= 0);
 
   return (
     <div
       style={{ position: 'fixed', top: 12, right: 12, zIndex: 9999 }}
-      data-testid="kill-switch-container"
-    >
+      data-testid="kill-switch-container">
       {/* Main kill button */}
       <button
         data-testid="kill-switch-button"
@@ -113,8 +111,7 @@ export default function KillSwitchButton() {
           boxShadow: status.engaged ? 'none' : '0 0 0 2px #991b1b',
           minWidth: 120,
           letterSpacing: '0.04em',
-        }}
-      >
+        }}>
         {status.engaged ? 'KILL ENGAGED' : isTriggering ? 'KILLING...' : 'KILL SWITCH'}
       </button>
 
@@ -122,13 +119,7 @@ export default function KillSwitchButton() {
       {status.engaged && status.seconds_until_reset !== null && status.seconds_until_reset > 0 && (
         <div
           data-testid="kill-switch-countdown"
-          style={{
-            marginTop: 6,
-            fontSize: '0.78rem',
-            color: '#9ca3af',
-            textAlign: 'center',
-          }}
-        >
+          style={{ marginTop: 6, fontSize: '0.78rem', color: '#9ca3af', textAlign: 'center' }}>
           Reset eligible in {formatSecondsRemaining(status.seconds_until_reset)}
         </div>
       )}
@@ -140,7 +131,7 @@ export default function KillSwitchButton() {
             data-testid="kill-switch-reset-input"
             type="text"
             value={resetPhrase}
-            onChange={(e) => setResetPhrase(e.target.value)}
+            onChange={e => setResetPhrase(e.target.value)}
             placeholder="I am ready to trade"
             style={{
               width: '100%',
@@ -163,16 +154,14 @@ export default function KillSwitchButton() {
               border: 'none',
               cursor: 'pointer',
               fontSize: '0.8rem',
-            }}
-          >
+            }}>
             Reset
           </button>
           {resetError && (
             <div
               data-testid="kill-switch-reset-error"
               role="alert"
-              style={{ color: '#dc2626', fontSize: '0.75rem', marginTop: 4 }}
-            >
+              style={{ color: '#dc2626', fontSize: '0.75rem', marginTop: 4 }}>
               {resetError}
             </div>
           )}

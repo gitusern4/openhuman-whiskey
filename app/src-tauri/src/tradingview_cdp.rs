@@ -510,7 +510,7 @@ pub async fn tv_cdp_attach(
 ///      missed half of the gate — fixed here.
 #[tauri::command]
 pub async fn tv_cdp_eval(
-    webview: tauri::Webview<tauri::Wry>,
+    webview: tauri::Webview<crate::AppRuntime>,
     state: tauri::State<'_, TvCdpState>,
     expression: String,
 ) -> Result<Value, String> {

@@ -7,10 +7,6 @@ import { PersistGate } from 'redux-persist/integration/react';
 import AppRoutes from './AppRoutes';
 import AppUpdatePrompt from './components/AppUpdatePrompt';
 import BootCheckGate from './components/BootCheckGate/BootCheckGate';
-// Whiskey fork — first-run onboarding wizard. Rendered as a sibling overlay
-// inside AppShell (inside the Router) so it can call useNavigate. The wizard
-// is invisible once onboarding_status.completed = true.
-import OnboardingWizard from './components/onboarding/OnboardingWizard';
 import BottomTabBar from './components/BottomTabBar';
 import CommandProvider from './components/commands/CommandProvider';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
@@ -18,6 +14,10 @@ import DictationHotkeyManager from './components/DictationHotkeyManager';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import MeshGradient from './components/MeshGradient';
+// Whiskey fork — first-run onboarding wizard. Rendered as a sibling overlay
+// inside AppShell (inside the Router) so it can call useNavigate. The wizard
+// is invisible once onboarding_status.completed = true.
+import OnboardingWizard from './components/onboarding/OnboardingWizard';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
 import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';

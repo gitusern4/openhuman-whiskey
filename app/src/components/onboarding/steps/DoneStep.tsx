@@ -36,10 +36,7 @@ const DoneStep = ({ selectedModeId, tvBridgeSkipped, hotkey, onFinish }: DoneSte
       label: 'TradingView bridge',
       value: tvBridgeSkipped ? 'Skipped — configure later in Settings' : 'Connected',
     },
-    {
-      label: 'Summon hotkey',
-      value: hotkey || 'Default (CmdOrCtrl+Shift+Space)',
-    },
+    { label: 'Summon hotkey', value: hotkey || 'Default (CmdOrCtrl+Shift+Space)' },
   ];
 
   return (

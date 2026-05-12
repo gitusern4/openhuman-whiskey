@@ -12,13 +12,11 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import KillSwitchButton from '../src/components/settings/panels/KillSwitchButton';
+
 // Mock @tauri-apps/api/core
 const mockInvoke = vi.fn();
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => mockInvoke(...args),
-}));
-
-import KillSwitchButton from '../src/components/settings/panels/KillSwitchButton';
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
 
 const notEngagedStatus = {
   engaged: false,
@@ -72,9 +70,7 @@ describe('KillSwitchButton', () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId('kill-switch-button'));
     });
-    expect(mockInvoke).toHaveBeenCalledWith('kill_switch_trigger', {
-      reason: 'manual_button',
-    });
+    expect(mockInvoke).toHaveBeenCalledWith('kill_switch_trigger', { reason: 'manual_button' });
   });
 
   it('shows countdown when engaged and cooldown running', async () => {
@@ -97,15 +93,12 @@ describe('KillSwitchButton', () => {
   it('shows error when reset phrase is wrong', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'kill_switch_status') return Promise.resolve(engagedCooldownElapsed);
-      if (cmd === 'kill_switch_request_reset')
-        return Promise.reject('reset phrase mismatch');
+      if (cmd === 'kill_switch_request_reset') return Promise.reject('reset phrase mismatch');
       return Promise.resolve();
     });
     render(<KillSwitchButton />);
     await waitFor(() => screen.getByTestId('kill-switch-reset-panel'));
-    fireEvent.change(screen.getByTestId('kill-switch-reset-input'), {
-      target: { value: 'wrong' },
-    });
+    fireEvent.change(screen.getByTestId('kill-switch-reset-input'), { target: { value: 'wrong' } });
     await act(async () => {
       fireEvent.click(screen.getByTestId('kill-switch-reset-button'));
     });

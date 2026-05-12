@@ -28,13 +28,11 @@ export default function LossCounter({ session, maxConsecutiveLosses }: Props) {
         borderRadius: 8,
         background: isAtMax ? '#fee2e2' : isWarning ? '#ffedd5' : '#f0fdf4',
         border: `1px solid ${color}`,
-      }}
-    >
+      }}>
       <span style={{ color: '#6b7280', fontSize: '0.85rem' }}>Losses today</span>
       <span
         data-testid="loss-counter-value"
-        style={{ fontWeight: 700, color, fontSize: '1rem', marginLeft: 'auto' }}
-      >
+        style={{ fontWeight: 700, color, fontSize: '1rem', marginLeft: 'auto' }}>
         {label}
       </span>
     </div>

@@ -52,7 +52,7 @@ export default function ConfirmTradeDialog({
   useEffect(() => {
     if (remaining <= 0) return;
     intervalRef.current = setInterval(() => {
-      setRemaining((r) => {
+      setRemaining(r => {
         if (r <= 1) {
           clearInterval(intervalRef.current!);
           return 0;
@@ -99,8 +99,7 @@ export default function ConfirmTradeDialog({
         justifyContent: 'center',
         backgroundColor: 'rgba(0,0,0,0.6)',
         zIndex: 10000,
-      }}
-    >
+      }}>
       <div
         style={{
           background: '#fff',
@@ -109,11 +108,8 @@ export default function ConfirmTradeDialog({
           minWidth: 320,
           maxWidth: 420,
           boxShadow: '0 25px 50px rgba(0,0,0,0.25)',
-        }}
-      >
-        <h2 style={{ margin: '0 0 16px', fontSize: '1.1rem', fontWeight: 700 }}>
-          Confirm Trade
-        </h2>
+        }}>
+        <h2 style={{ margin: '0 0 16px', fontSize: '1.1rem', fontWeight: 700 }}>Confirm Trade</h2>
 
         {/* Proposal summary */}
         <div
@@ -124,8 +120,7 @@ export default function ConfirmTradeDialog({
             padding: 12,
             marginBottom: 16,
             fontSize: '0.9rem',
-          }}
-        >
+          }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
             <span style={{ color: '#6b7280' }}>Instrument</span>
             <span style={{ fontWeight: 600 }} data-testid="proposal-instrument">
@@ -134,7 +129,9 @@ export default function ConfirmTradeDialog({
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
             <span style={{ color: '#6b7280' }}>Direction</span>
-            <span style={{ fontWeight: 700, color: directionColor }} data-testid="proposal-direction">
+            <span
+              style={{ fontWeight: 700, color: directionColor }}
+              data-testid="proposal-direction">
               {directionLabel}
             </span>
           </div>
@@ -164,8 +161,7 @@ export default function ConfirmTradeDialog({
               borderTop: '1px solid #e5e7eb',
               paddingTop: 6,
               marginTop: 6,
-            }}
-          >
+            }}>
             <span style={{ color: '#6b7280' }}>R estimate</span>
             <span style={{ fontWeight: 700 }} data-testid="proposal-r-estimate">
               ${proposal.r_estimate_dollars.toFixed(2)}
@@ -180,8 +176,7 @@ export default function ConfirmTradeDialog({
               <span style={{ color: '#6b7280' }}>Playbook</span>
               <span
                 style={{ fontSize: '0.8rem', color: '#374151' }}
-                data-testid="proposal-playbook"
-              >
+                data-testid="proposal-playbook">
                 {proposal.playbook_match_id}
               </span>
             </div>
@@ -192,8 +187,7 @@ export default function ConfirmTradeDialog({
           <div
             role="alert"
             data-testid="confirm-error"
-            style={{ color: '#dc2626', fontSize: '0.8rem', marginBottom: 12 }}
-          >
+            style={{ color: '#dc2626', fontSize: '0.8rem', marginBottom: 12 }}>
             {error}
           </div>
         )}
@@ -208,8 +202,7 @@ export default function ConfirmTradeDialog({
               fontWeight: 700,
               color: '#dc2626',
               marginBottom: 12,
-            }}
-          >
+            }}>
             {remaining}
           </div>
         )}
@@ -227,8 +220,7 @@ export default function ConfirmTradeDialog({
               background: '#fff',
               cursor: 'pointer',
               fontWeight: 600,
-            }}
-          >
+            }}>
             Cancel
           </button>
           <button
@@ -244,8 +236,7 @@ export default function ConfirmTradeDialog({
               color: '#fff',
               cursor: canConfirm ? 'pointer' : 'not-allowed',
               fontWeight: 700,
-            }}
-          >
+            }}>
             {confirming ? 'Submitting...' : 'Confirm'}
           </button>
         </div>

@@ -12,15 +12,13 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockInvoke = vi.fn();
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => mockInvoke(...args),
-}));
-
-vi.useFakeTimers();
-
 import LLMProposalCard from '../src/components/settings/panels/LLMProposalCard';
 import type { ProposalShape } from '../src/components/settings/panels/types';
+
+const mockInvoke = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
+
+vi.useFakeTimers();
 
 const sampleProposal: ProposalShape = {
   proposal_hash: 'b'.repeat(64),
@@ -42,18 +40,14 @@ describe('LLMProposalCard', () => {
   });
 
   it('renders trigger button initially', () => {
-    render(
-      <LLMProposalCard context="context" consecutiveLosses={0} />,
-    );
+    render(<LLMProposalCard context="context" consecutiveLosses={0} />);
     expect(screen.getByTestId('llm-proposal-trigger')).toBeInTheDocument();
     expect(screen.queryByTestId('llm-proposal-summary')).toBeNull();
   });
 
   it('shows proposal card when whiskey_propose_trade returns proposal', async () => {
     mockInvoke.mockResolvedValue(sampleProposal);
-    render(
-      <LLMProposalCard context="test" consecutiveLosses={0} />,
-    );
+    render(<LLMProposalCard context="test" consecutiveLosses={0} />);
     await act(async () => {
       fireEvent.click(screen.getByTestId('llm-proposal-trigger'));
     });
@@ -65,9 +59,7 @@ describe('LLMProposalCard', () => {
 
   it('shows error when propose_trade returns null', async () => {
     mockInvoke.mockResolvedValue(null);
-    render(
-      <LLMProposalCard context="test" consecutiveLosses={0} />,
-    );
+    render(<LLMProposalCard context="test" consecutiveLosses={0} />);
     await act(async () => {
       fireEvent.click(screen.getByTestId('llm-proposal-trigger'));
     });
@@ -81,12 +73,16 @@ describe('LLMProposalCard', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'whiskey_propose_trade') return Promise.resolve(sampleProposal);
       if (cmd === 'kill_switch_status')
-        return Promise.resolve({ engaged: false, engaged_at: null, trigger: null, reset_after_utc: null, seconds_until_reset: null });
+        return Promise.resolve({
+          engaged: false,
+          engaged_at: null,
+          trigger: null,
+          reset_after_utc: null,
+          seconds_until_reset: null,
+        });
       return Promise.resolve('order_submitted:test');
     });
-    render(
-      <LLMProposalCard context="test" consecutiveLosses={0} />,
-    );
+    render(<LLMProposalCard context="test" consecutiveLosses={0} />);
     await act(async () => {
       fireEvent.click(screen.getByTestId('llm-proposal-trigger'));
     });
@@ -99,9 +95,7 @@ describe('LLMProposalCard', () => {
 
   it('dismiss hides proposal card', async () => {
     mockInvoke.mockResolvedValue(sampleProposal);
-    render(
-      <LLMProposalCard context="test" consecutiveLosses={0} />,
-    );
+    render(<LLMProposalCard context="test" consecutiveLosses={0} />);
     await act(async () => {
       fireEvent.click(screen.getByTestId('llm-proposal-trigger'));
     });

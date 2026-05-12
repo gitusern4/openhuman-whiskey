@@ -5,6 +5,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 
 import App from './App';
+import { applyStoredTheme } from './hooks/useTheme';
 import './index.css';
 import { getCoreStateSnapshot } from './lib/coreState/store';
 import MascotWindowApp from './mascot/MascotWindowApp';
@@ -18,7 +19,6 @@ import OverlayApp from './overlay/OverlayApp';
 import './polyfills';
 import { initSentry } from './services/analytics';
 import { setStoreForApiClient } from './services/apiClient';
-import { applyStoredTheme } from './hooks/useTheme';
 import { primeActiveUserId } from './store/userScopedStorage';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
 import { getActiveUserIdFromCore } from './utils/tauriCommands';
