@@ -2083,6 +2083,9 @@ pub fn run() {
             tradingview_cdp::tv_cdp_set_symbol,
             tradingview_cdp::tv_cdp_launch_tv,
             tradingview_cdp::tv_cdp_detach,
+            // TK's Mods — SL/TP overlay commands.
+            tradingview_cdp::tv_cdp_draw_sltp,
+            tradingview_cdp::tv_cdp_clear_sltp,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
             meet_call::meet_call_open_window,

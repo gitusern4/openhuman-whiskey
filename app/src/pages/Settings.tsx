@@ -27,6 +27,7 @@ import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
 import TeamManagementPanel from '../components/settings/panels/TeamManagementPanel';
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
 import TeamPanel from '../components/settings/panels/TeamPanel';
+import TksModsPanel from '../components/settings/panels/TksModsPanel';
 import ToolsPanel from '../components/settings/panels/ToolsPanel';
 import TradingViewBridgePanel from '../components/settings/panels/TradingViewBridgePanel';
 import VoiceDebugPanel from '../components/settings/panels/VoiceDebugPanel';
@@ -218,6 +219,24 @@ const aiModelsSettingsItems = [
     ),
   },
   {
+    // Whiskey fork — TK's Mods. Theme picker (ZETH), SL/TP overlay, and
+    // risk-display toggle.
+    id: 'tks-mods',
+    title: "TK's Mods",
+    description: 'Themes, SL/TP overlay, and risk-display preferences.',
+    route: 'tks-mods',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"
+        />
+      </svg>
+    ),
+  },
+  {
     // Whiskey fork — TradingView Desktop CDP bridge. Attaches to
     // TradingView Desktop's renderer via Chrome DevTools Protocol so
     // Whiskey can read live chart state (symbol, timeframe, indicator
@@ -332,6 +351,8 @@ const Settings = () => {
         <Route path="ai" element={wrapSettingsPage(<AIPanel />)} />
         {/* Whiskey fork — agent-mode picker. */}
         <Route path="modes" element={wrapSettingsPage(<ModesPanel />)} />
+        {/* Whiskey fork — TK's Mods: themes, SL/TP overlay, risk-hide. */}
+        <Route path="tks-mods" element={wrapSettingsPage(<TksModsPanel />)} />
         {/* Whiskey fork — TradingView Desktop CDP bridge. */}
         <Route path="tradingview-bridge" element={wrapSettingsPage(<TradingViewBridgePanel />)} />
         <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />

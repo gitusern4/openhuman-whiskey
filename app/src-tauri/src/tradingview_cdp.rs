@@ -724,6 +724,187 @@ pub async fn tv_cdp_detach(state: tauri::State<'_, TvCdpState>) -> Result<(), St
 }
 
 // ---------------------------------------------------------------------------
+// TK's Mods — SL/TP overlay commands
+// ---------------------------------------------------------------------------
+
+/// JavaScript snippet that draws three labeled horizontal lines on the
+/// active TV chart: entry (gray), stop (red-ish), target (green-ish).
+///
+/// Each line is tagged with the `whiskey-sltp-` prefix in its `text`
+/// field so `tv_cdp_clear_sltp` can find and delete them by iterating
+/// `getAllShapes()` and matching the prefix.
+///
+/// Placeholders replaced at call time (Rust-side, JSON-encoded):
+///   - `__ENTRY__`  — entry price as a JSON number
+///   - `__STOP__`   — stop  price as a JSON number
+///   - `__TARGET__` — target price as a JSON number
+///   - `__ZETH__`   — "true" or "false" — when true uses ZETH neon palette
+///
+/// Shape: `horizontal_line` with `lock: true` so the user can't drag
+/// it by mistake. Time is set to `Date.now() / 1000` which TV uses only
+/// to place the shape on the correct bar when first drawn; for horizontals
+/// the time value has no visible effect after creation.
+const JS_DRAW_SLTP: &str = r#"
+(() => {
+  try {
+    const tv = window.tradingViewApi || window.TradingView || {};
+    const chartWidget = window.chartWidget || (typeof tv.chart === 'function' ? tv.chart() : null);
+    const activeChart = (chartWidget && typeof chartWidget.activeChart === 'function')
+      ? chartWidget.activeChart()
+      : null;
+    if (!activeChart || typeof activeChart.createMultipointShape !== 'function') {
+      return JSON.stringify({ ok: false, error: 'createMultipointShape unavailable' });
+    }
+    const zeth = __ZETH__;
+    const entry  = __ENTRY__;
+    const stop   = __STOP__;
+    const target = __TARGET__;
+    const now = Math.floor(Date.now() / 1000);
+
+    const entryColor  = zeth ? '#9ca3af' : '#6b7280'; // gray-400 / gray-500
+    const stopColor   = zeth ? '#ef4444' : '#dc2626'; // red-500 / red-600
+    const targetColor = zeth ? '#39ff14' : '#16a34a'; // neon green / green-600
+
+    const drawLine = (price, color, label) => {
+      try {
+        return activeChart.createMultipointShape(
+          [{ time: now, price }],
+          {
+            shape: 'horizontal_line',
+            text: 'whiskey-sltp-' + label,
+            lock: true,
+            overrides: {
+              linecolor: color,
+              linewidth: 2,
+              linestyle: 0,
+              showLabel: true,
+              textcolor: color,
+              fontSize: 11,
+            },
+          }
+        );
+      } catch (e) {
+        return null;
+      }
+    };
+
+    const ids = {
+      entry:  drawLine(entry,  entryColor,  'entry'),
+      stop:   drawLine(stop,   stopColor,   'stop'),
+      target: drawLine(target, targetColor, 'target'),
+    };
+    return JSON.stringify({ ok: true, ids });
+  } catch (e) {
+    return JSON.stringify({ ok: false, error: String(e) });
+  }
+})()
+"#;
+
+/// JavaScript snippet that removes all shapes whose `text` starts with
+/// the `whiskey-sltp-` prefix. Uses `getAllShapes()` to enumerate then
+/// `removeEntity()` per shape id. Defensive: silently skips any shape
+/// whose removal fails (TV may have already removed it on chart switch).
+const JS_CLEAR_SLTP: &str = r#"
+(() => {
+  try {
+    const tv = window.tradingViewApi || window.TradingView || {};
+    const chartWidget = window.chartWidget || (typeof tv.chart === 'function' ? tv.chart() : null);
+    const activeChart = (chartWidget && typeof chartWidget.activeChart === 'function')
+      ? chartWidget.activeChart()
+      : null;
+    if (!activeChart) {
+      return JSON.stringify({ ok: false, error: 'activeChart unavailable' });
+    }
+    const PREFIX = 'whiskey-sltp-';
+    let removed = 0;
+    if (typeof activeChart.getAllShapes === 'function') {
+      const shapes = activeChart.getAllShapes() ?? [];
+      for (const s of shapes) {
+        if (s && typeof s.name === 'string' && s.name.startsWith(PREFIX)) {
+          try { activeChart.removeEntity(s.id); removed++; } catch (_) {}
+        }
+      }
+    }
+    return JSON.stringify({ ok: true, removed });
+  } catch (e) {
+    return JSON.stringify({ ok: false, error: String(e) });
+  }
+})()
+"#;
+
+/// Result returned by `tv_cdp_draw_sltp` and `tv_cdp_clear_sltp`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TvSltpResult {
+    pub ok: bool,
+    pub removed: Option<u32>,
+    pub error: Option<String>,
+}
+
+/// TK's Mods — draw entry, stop, and target horizontal lines on the
+/// active TV chart using the CDP bridge.
+///
+/// Colors: gray for entry, red for stop, neon green for target. When
+/// `zeth_theme` is `true` the neon green (#39ff14) is used for the
+/// target line to match the ZETH palette; otherwise a standard green is
+/// used.
+///
+/// Each line is tagged with `whiskey-sltp-<role>` in its text so the
+/// companion `tv_cdp_clear_sltp` command can clean up only our lines.
+#[tauri::command]
+pub async fn tv_cdp_draw_sltp(
+    state: tauri::State<'_, TvCdpState>,
+    entry: f64,
+    stop: f64,
+    target: f64,
+    zeth_theme: Option<bool>,
+) -> Result<TvSltpResult, String> {
+    let zeth = zeth_theme.unwrap_or(false);
+    let expr = JS_DRAW_SLTP
+        .replace("__ENTRY__", &entry.to_string())
+        .replace("__STOP__", &stop.to_string())
+        .replace("__TARGET__", &target.to_string())
+        .replace("__ZETH__", if zeth { "true" } else { "false" });
+    let raw = tv_cdp_eval(state, expr).await?;
+    let parsed: Value = match &raw {
+        Value::String(s) => serde_json::from_str(s).unwrap_or(Value::Null),
+        other => other.clone(),
+    };
+    Ok(TvSltpResult {
+        ok: parsed.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
+        removed: None,
+        error: parsed
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    })
+}
+
+/// TK's Mods — remove all `whiskey-sltp-*` horizontal lines from the
+/// active chart. Only touches lines drawn by `tv_cdp_draw_sltp`; any
+/// other user-drawn shapes are left intact.
+#[tauri::command]
+pub async fn tv_cdp_clear_sltp(
+    state: tauri::State<'_, TvCdpState>,
+) -> Result<TvSltpResult, String> {
+    let raw = tv_cdp_eval(state, JS_CLEAR_SLTP.to_string()).await?;
+    let parsed: Value = match &raw {
+        Value::String(s) => serde_json::from_str(s).unwrap_or(Value::Null),
+        other => other.clone(),
+    };
+    Ok(TvSltpResult {
+        ok: parsed.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
+        removed: parsed
+            .get("removed")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32),
+        error: parsed
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
