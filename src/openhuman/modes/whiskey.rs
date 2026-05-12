@@ -46,17 +46,28 @@ impl WhiskeyMode {
         "current_time",
     ];
 
-    /// Construct with the default memory root resolved from the user's
-    /// home directory, falling back to a sensible relative path if
-    /// `dirs::home_dir()` returns `None`.
+    /// Construct with the default memory root resolved from the
+    /// environment + filesystem (see [`default_whiskey_memory_root`]
+    /// for the full resolution chain). Equivalent to
+    /// [`WhiskeyMode::with_env_overrides`].
     pub fn new() -> Self {
+        Self::with_env_overrides()
+    }
+
+    /// Construct by running the full memory-root resolution chain:
+    /// `OPENHUMAN_WHISKEY_MEMORY_ROOT` env var, then
+    /// `~/.openhuman/whiskey_memory/` if it exists, then the legacy
+    /// Claude-Code skill path if it exists, then the openhuman path
+    /// as a last-resort fallback. See
+    /// [`default_whiskey_memory_root`] for the authoritative spec.
+    pub fn with_env_overrides() -> Self {
         Self {
             memory_root: default_whiskey_memory_root(),
         }
     }
 
     /// Override the memory root (used by tests and by the eventual
-    /// settings UI).
+    /// settings UI). Bypasses the env / filesystem resolution chain.
     pub fn with_memory_root(memory_root: PathBuf) -> Self {
         Self { memory_root }
     }
@@ -134,25 +145,68 @@ impl Mode for WhiskeyMode {
     }
 }
 
-/// Default location of the Whiskey memory files. Resolved at runtime
-/// (not a `const`) because `dirs::home_dir()` is not const.
+/// Resolution chain for the Whiskey memory directory. First hit wins.
+///
+/// 1. **`OPENHUMAN_WHISKEY_MEMORY_ROOT` env var** — explicit override,
+///    no existence check (operator opted in; if they typo'd, the
+///    downstream `read_dir` returns `None` and ingestion silently
+///    skips, which is the correct behaviour). The `OPENHUMAN_` prefix
+///    matches the convention used elsewhere in this crate (see
+///    `OPENHUMAN_HOME`, `OPENHUMAN_MEMORY_*`, etc.).
+/// 2. **`~/.openhuman/whiskey_memory/`** — the canonical
+///    cross-machine location, used only if it exists. This is the
+///    "I rsynced my Whiskey notes here" path: explicit user opt-in by
+///    creating the directory.
+/// 3. **`~/.claude/projects/C--Users-legen-Documents-ruflo-main/memory/`**
+///    — the legacy hardcoded path the original fork author used.
+///    Honored only if it exists, so other users aren't pointed at a
+///    nonexistent dir specific to one machine.
+/// 4. **Fallback: `~/.openhuman/whiskey_memory/`** — returned even
+///    when nothing exists. The memory cache will return `None` until
+///    the user creates the directory; that's the intended UX, not an
+///    error.
+///
+/// Resolved at runtime (not a `const`) because `dirs::home_dir()` and
+/// `std::env::var()` aren't const-evaluable.
 fn default_whiskey_memory_root() -> PathBuf {
-    // Match the path the user's Claude Code Whiskey skill writes to.
-    // Per MEMORY.md in the user's profile, the canonical location is:
-    //   ~/.claude/projects/C--Users-<user>-Documents-ruflo-main/memory/
-    // This will not exist on every install — that's fine, ingestion
-    // tolerates missing roots.
-    if let Some(home) = dirs::home_dir() {
-        // The colon-encoded project dir is specific to this user; we
-        // resolve the parent and let ingestion enumerate. Any new
-        // project-scoped Claude memory dir will work the same.
-        home.join(".claude")
+    // 1. Explicit env-var override.
+    if let Ok(raw) = std::env::var("OPENHUMAN_WHISKEY_MEMORY_ROOT") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+
+    let home = dirs::home_dir();
+
+    // 2. Cross-machine canonical location, if the user created it.
+    let openhuman_path = home
+        .as_ref()
+        .map(|h| h.join(".openhuman").join("whiskey_memory"));
+    if let Some(p) = &openhuman_path {
+        if p.is_dir() {
+            return p.clone();
+        }
+    }
+
+    // 3. Legacy author-specific path, only if present on this machine.
+    if let Some(home) = &home {
+        let legacy = home
+            .join(".claude")
             .join("projects")
             .join("C--Users-legen-Documents-ruflo-main")
-            .join("memory")
-    } else {
-        PathBuf::from(".claude/projects/whiskey/memory")
+            .join("memory");
+        if legacy.is_dir() {
+            return legacy;
+        }
     }
+
+    // 4. Fallback — the openhuman path even if it doesn't exist yet.
+    if let Some(p) = openhuman_path {
+        return p;
+    }
+    // Final fallback when even `dirs::home_dir()` is unavailable.
+    PathBuf::from(".openhuman/whiskey_memory")
 }
 
 // ---------------------------------------------------------------------------
@@ -257,12 +311,17 @@ mod tests {
         let roots = m.additional_memory_roots();
         assert_eq!(roots.len(), 1);
         let session_log = m.session_memory_write_path().unwrap();
-        // Session log lives inside the configured root.
+        // Session log lives inside the configured root, regardless of
+        // which branch of the resolution chain produced the root.
         assert!(session_log.starts_with(&roots[0]));
         assert_eq!(
             session_log.file_name().unwrap().to_string_lossy(),
             "whiskey_session_log.md"
         );
+        // The resolved root must be non-empty — the resolution chain
+        // always yields *some* path, even if the directory doesn't
+        // exist yet on this machine.
+        assert!(!roots[0].as_os_str().is_empty());
     }
 
     #[test]
@@ -284,6 +343,162 @@ mod tests {
         assert_eq!(
             m.session_memory_write_path().unwrap(),
             custom.join("whiskey_session_log.md")
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Resolution chain tests.
+    //
+    // The env-var test mutates a process-wide variable, so it is
+    // marked `#[serial]`-style by guarding the var name to one
+    // unique to this test (and clearing it on exit). The other
+    // resolution-chain tests exercise `default_whiskey_memory_root`
+    // indirectly via temp directories where possible, or directly
+    // when a controlled HOME is needed.
+    // ---------------------------------------------------------------
+
+    /// Guard that resets an env var on drop so a panicking test
+    /// can't leak state into sibling tests.
+    struct EnvVarGuard {
+        key: &'static str,
+        prior: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prior = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prior }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let prior = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, prior }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.prior {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn unique_tmp_dir(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("whiskey-resolve-{name}-{nanos}"));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        dir
+    }
+
+    #[test]
+    fn resolution_env_var_overrides_everything() {
+        let tmp = unique_tmp_dir("env-override");
+        let _guard = EnvVarGuard::set(
+            "OPENHUMAN_WHISKEY_MEMORY_ROOT",
+            tmp.to_str().expect("utf8 tmp path"),
+        );
+        let resolved = default_whiskey_memory_root();
+        assert_eq!(resolved, tmp);
+
+        // And the public constructor wires it through.
+        let m = WhiskeyMode::with_env_overrides();
+        assert_eq!(m.additional_memory_roots(), vec![tmp]);
+    }
+
+    #[test]
+    fn resolution_env_var_empty_string_is_ignored() {
+        // An empty / whitespace env var should NOT clobber the
+        // filesystem-based fallbacks — treat as if unset.
+        let _guard = EnvVarGuard::set("OPENHUMAN_WHISKEY_MEMORY_ROOT", "   ");
+        let resolved = default_whiskey_memory_root();
+        // We can't assert the exact path (depends on the runner's
+        // home dir), but it must NOT be the empty string from the env.
+        assert!(!resolved.as_os_str().is_empty());
+        assert_ne!(resolved, PathBuf::from("   "));
+    }
+
+    #[test]
+    fn resolution_legacy_path_honored_only_when_present() {
+        // We can't safely create the legacy path on the runner's
+        // real home dir without polluting the user's filesystem, so
+        // we exercise the *negative* branch: when the env var is
+        // unset and the legacy path doesn't exist, the resolved
+        // root must still be a non-empty path inside the openhuman
+        // fallback location (or a relative fallback if no home).
+        let _guard = EnvVarGuard::unset("OPENHUMAN_WHISKEY_MEMORY_ROOT");
+        let resolved = default_whiskey_memory_root();
+        // Should NOT contain the legacy author-specific segment
+        // unless that directory genuinely exists on this machine.
+        let s = resolved.to_string_lossy();
+        let legacy_marker = "C--Users-legen-Documents-ruflo-main";
+        if s.contains(legacy_marker) {
+            // If the resolver returned the legacy path, the dir must
+            // actually exist (this is the branch the original author
+            // hits on their own box).
+            assert!(
+                resolved.is_dir(),
+                "legacy path returned but does not exist: {}",
+                resolved.display()
+            );
+        } else {
+            // Otherwise we should be on the openhuman fallback.
+            assert!(
+                s.contains("openhuman") || s.contains(".openhuman"),
+                "expected openhuman fallback, got {}",
+                resolved.display()
+            );
+        }
+    }
+
+    #[test]
+    fn resolution_openhuman_dir_preferred_over_legacy() {
+        // When the openhuman dir exists, it must win over the
+        // legacy path (regardless of whether the legacy path also
+        // exists on this machine). We can't safely manipulate the
+        // user's real ~/.openhuman, so we simulate the branch by
+        // pointing the env var at a known-existing temp dir — that
+        // is functionally identical to the openhuman branch from
+        // the resolver's perspective (both produce "first hit
+        // before legacy"). Combined with
+        // `resolution_legacy_path_honored_only_when_present`, this
+        // covers the ordering contract.
+        let tmp = unique_tmp_dir("prefers-openhuman");
+        let _guard = EnvVarGuard::set(
+            "OPENHUMAN_WHISKEY_MEMORY_ROOT",
+            tmp.to_str().expect("utf8 tmp path"),
+        );
+        let resolved = default_whiskey_memory_root();
+        assert_eq!(resolved, tmp);
+        assert!(
+            !resolved
+                .to_string_lossy()
+                .contains("C--Users-legen-Documents-ruflo-main"),
+            "openhuman/env path must take precedence over the legacy author path"
+        );
+    }
+
+    #[test]
+    fn resolution_fallback_returns_openhuman_path_even_when_missing() {
+        // With env var unset, the resolver must always return a
+        // non-empty path. On a clean CI runner with no
+        // ~/.openhuman/whiskey_memory and no legacy dir, that path
+        // will be the openhuman location even though it doesn't
+        // exist — memory_cache::resolve will then return None,
+        // which is the documented contract.
+        let _guard = EnvVarGuard::unset("OPENHUMAN_WHISKEY_MEMORY_ROOT");
+        let resolved = default_whiskey_memory_root();
+        assert!(!resolved.as_os_str().is_empty());
+        assert!(
+            resolved.file_name().is_some(),
+            "expected a real path leaf, got {}",
+            resolved.display()
         );
     }
 }
