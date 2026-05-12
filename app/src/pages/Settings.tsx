@@ -28,6 +28,7 @@ import TeamManagementPanel from '../components/settings/panels/TeamManagementPan
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
 import TeamPanel from '../components/settings/panels/TeamPanel';
 import ToolsPanel from '../components/settings/panels/ToolsPanel';
+import TradingViewBridgePanel from '../components/settings/panels/TradingViewBridgePanel';
 import VoiceDebugPanel from '../components/settings/panels/VoiceDebugPanel';
 import VoicePanel from '../components/settings/panels/VoicePanel';
 import WebhooksDebugPanel from '../components/settings/panels/WebhooksDebugPanel';
@@ -216,6 +217,27 @@ const aiModelsSettingsItems = [
       </svg>
     ),
   },
+  {
+    // Whiskey fork — TradingView Desktop CDP bridge. Attaches to
+    // TradingView Desktop's renderer via Chrome DevTools Protocol so
+    // Whiskey can read live chart state (symbol, timeframe, indicator
+    // values, alerts) and write back. See `tradingview_cdp.rs` for
+    // setup story; user must launch TV with `--remote-debugging-port=9222`.
+    id: 'tradingview-bridge',
+    title: 'TradingView bridge',
+    description: 'Attach Whiskey to TradingView Desktop via Chrome DevTools Protocol',
+    route: 'tradingview-bridge',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M3 3v18h18M7 14l4-4 4 4 5-5"
+        />
+      </svg>
+    ),
+  },
 ];
 
 const WrappedSettingsPage = ({ children }: { children: ReactNode }) => {
@@ -310,6 +332,11 @@ const Settings = () => {
         <Route path="ai" element={wrapSettingsPage(<AIPanel />)} />
         {/* Whiskey fork — agent-mode picker. */}
         <Route path="modes" element={wrapSettingsPage(<ModesPanel />)} />
+        {/* Whiskey fork — TradingView Desktop CDP bridge. */}
+        <Route
+          path="tradingview-bridge"
+          element={wrapSettingsPage(<TradingViewBridgePanel />)}
+        />
         <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />
         <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
         <Route
