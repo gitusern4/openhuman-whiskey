@@ -49,8 +49,10 @@ pub struct ProposalStore(pub Arc<Mutex<HashMap<String, (StoredProposal, Instant)
 const PROPOSAL_TTL_SECS: u64 = 120;
 
 /// Full proposal payload persisted between submit and confirm steps.
+/// Public because it appears as a generic parameter on `ProposalStore`,
+/// which is constructed in `lib.rs` via `Tauri::manage(...)`.
 #[derive(Clone)]
-struct StoredProposal {
+pub struct StoredProposal {
     instrument: String,
     action: String,
     qty: u32,

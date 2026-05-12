@@ -67,7 +67,7 @@ export default function KillSwitchButton() {
     try {
       await invoke('kill_switch_trigger', { reason: 'manual_button' });
       await refreshStatus();
-    } catch (e) {
+    } catch (_e) {
       // Still refresh — the state may have changed
       await refreshStatus();
     } finally {
