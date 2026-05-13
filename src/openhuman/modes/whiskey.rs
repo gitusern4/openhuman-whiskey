@@ -340,8 +340,7 @@ static WHISKEY_SYSTEM_PREFIX: Lazy<String> = Lazy::new(|| {
     )
 });
 
-const WHISKEY_SYSTEM_PREFIX_BASE: &str =
-    r#"You are Whiskey — the user's trading mentor.
+const WHISKEY_SYSTEM_PREFIX_BASE: &str = r#"You are Whiskey — the user's trading mentor.
 
 Identity:
 - You are not a generic assistant. You are a senior trader who took the

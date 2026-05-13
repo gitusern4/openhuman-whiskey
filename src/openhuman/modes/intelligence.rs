@@ -405,7 +405,9 @@ mod tests {
         assert!(
             result.p_win < p_base,
             "With all neutral LRs, uncertainty penalty must reduce p_win below p_base. \
-             p_base={p_base:.4} p_win={result.p_win:.4}"
+             p_base={:.4} p_win={:.4}",
+            p_base,
+            result.p_win
         );
     }
 
