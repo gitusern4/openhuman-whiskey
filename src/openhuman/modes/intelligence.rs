@@ -415,12 +415,15 @@ mod tests {
 
     #[test]
     fn extreme_uncertainty_large_penalty_lowers_confidence() {
-        // N=1, wins=1: wide CI → large uncertainty penalty.
+        // Hold the Laplace-smoothed p_base near-equal so the only meaningful
+        // difference between the two arms is the uncertainty penalty. With
+        // (1.5)/(2) ≈ 0.750 vs (75.5)/(101) ≈ 0.748 the priors are within
+        // 0.002 of each other; the only thing that can drive a measurable
+        // gap in p_win is the CI-width penalty.
         let low_n =
             compute_confidence(&setup(1, 1), &evidence(2.0), &regime(1.0, 1.0), &psych(1.0));
-        // N=100, wins=60: narrow CI → smaller penalty.
         let high_n = compute_confidence(
-            &setup(60, 100),
+            &setup(75, 100),
             &evidence(2.0),
             &regime(1.0, 1.0),
             &psych(1.0),
@@ -431,7 +434,7 @@ mod tests {
         );
         assert!(
             low_n.p_win < high_n.p_win,
-            "N=1 should produce lower p_win than N=100 for identical signals"
+            "N=1 should produce lower p_win than N=100 at matched p_base"
         );
     }
 

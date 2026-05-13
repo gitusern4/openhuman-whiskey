@@ -1079,10 +1079,13 @@ mod tests {
 
     #[test]
     fn opening_drive_neutral_on_low_volume() {
-        // Even if close is bullish, low volume → not an unambiguous drive.
-        let bar = bar_sample(100.0, 102.0, 99.0, 101.5, 900.0);
-        let ot = opening_drive_classifier(100.0, &bar, 1000.0);
-        // Low volume but no open/close reversal → Neutral.
+        // Low volume → not an unambiguous DriveUp/DriveDown. Open and close
+        // both sit on the same side of the bar midpoint (no responsive
+        // reversal across midpoint), so the classifier must fall through to
+        // Neutral. Bar: midpoint = (102+101)/2 = 101.5; open=101 < midpoint;
+        // close=101.4 < midpoint; no cross → no Responsive signal.
+        let bar = bar_sample(101.0, 102.0, 101.0, 101.4, 900.0);
+        let ot = opening_drive_classifier(101.0, &bar, 1000.0);
         assert_eq!(ot, OpeningType::Neutral);
     }
 
