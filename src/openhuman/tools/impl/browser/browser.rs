@@ -16,7 +16,7 @@ mod security;
 mod types;
 
 pub(super) use action_parser::{
-    is_computer_use_only_action, is_supported_browser_action, parse_browser_action,
+    backend_name, is_computer_use_only_action, is_supported_browser_action, parse_browser_action,
     unavailable_action_for_backend_error,
 };
 pub(super) use security::{
