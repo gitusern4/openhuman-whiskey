@@ -84,6 +84,30 @@ jobs:
             echo "CXX_aarch64_pc_windows_msvc=cl.exe"
             echo "AR_aarch64_pc_windows_msvc=lib.exe"
             echo "CMAKE_GENERATOR=Ninja"
+            # aws-lc-sys cross-compile to aarch64-pc-windows-msvc.
+            #
+            # The default cc-builder feeds cl.exe both `-march=armv8.4-a+sha3`
+            # (a gcc/clang-only flag cl.exe rejects) and raw `.S` assembly
+            # source files (cl.exe has no GAS assembler). The compiler-feature
+            # probes (`stdalign_check.c`, `neon_sha3_check.c`, `c11.c`) also
+            # fail because cl.exe defaults to a pre-C11 mode that does not
+            # know about `<stdalign.h>` / `_Alignas`.
+            #
+            # The combination below is the documented escape hatch:
+            #   - AWS_LC_SYS_CMAKE_BUILDER=1 routes the build through the
+            #     cmake crate, which knows how to drive cl.exe with the
+            #     ARM64 platform set and to assemble `.S` via the bundled
+            #     armasm64.exe.
+            #   - AWS_LC_SYS_NO_ASM=1 disables the optimised ARM ASM modules
+            #     (no SHA3-via-NEON, no AES intrinsics) so we never feed `.S`
+            #     files into cl.exe and never set `-march=`. Performance hit
+            #     is acceptable for our use case (TLS handshakes, not bulk
+            #     crypto).
+            #   - AWS_LC_SYS_C_STD=C11 forces `/std:c11` on cl.exe so
+            #     `_Alignas` / `<stdalign.h>` and `_Atomic` are in scope.
+            echo "AWS_LC_SYS_CMAKE_BUILDER=1"
+            echo "AWS_LC_SYS_NO_ASM=1"
+            echo "AWS_LC_SYS_C_STD=C11"
           } >> "$GITHUB_ENV"
 
       # CEF download is ~400MB; cache per-target so reruns are fast.
