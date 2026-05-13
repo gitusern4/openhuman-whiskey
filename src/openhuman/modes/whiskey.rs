@@ -15,6 +15,8 @@
 
 use std::path::PathBuf;
 
+use once_cell::sync::Lazy;
+
 use super::Mode;
 
 /// `WhiskeyMode` — the trading-mentor persona.
@@ -130,7 +132,7 @@ impl Mode for WhiskeyMode {
     }
 
     fn system_prompt_prefix(&self) -> Option<&str> {
-        Some(WHISKEY_SYSTEM_PREFIX)
+        Some(WHISKEY_SYSTEM_PREFIX.as_str())
     }
 
     fn reflection_prompt_override(&self) -> Option<&str> {
@@ -323,9 +325,22 @@ Never propose a setup where the expected gross edge does not clear this bar.
 
 /// Full Whiskey system prompt prefix, composed from individual clause constants.
 ///
-/// Composed at module load time as a `&'static str`-equivalent via `concat!`.
-/// No runtime allocation.
-const WHISKEY_SYSTEM_PREFIX: &str = concat!(
+/// Composed once on first access via `Lazy<String>`. The base body is a
+/// const literal; runtime composition appends the four clause constants
+/// (which themselves are const `&str` and thus cannot be fed to `concat!`
+/// because `concat!` only accepts literal tokens).
+static WHISKEY_SYSTEM_PREFIX: Lazy<String> = Lazy::new(|| {
+    let base = WHISKEY_SYSTEM_PREFIX_BASE;
+    format!(
+        "{base}{}{}{}{}",
+        WHISKEY_BREAKEVEN_CLAUSE,
+        WHISKEY_REGIME_CLAUSE,
+        WHISKEY_DSR_CLAUSE,
+        WHISKEY_COMMISSION_DRAG_TEMPLATE,
+    )
+});
+
+const WHISKEY_SYSTEM_PREFIX_BASE: &str =
     r#"You are Whiskey — the user's trading mentor.
 
 Identity:
@@ -406,12 +421,7 @@ Rules for the proposal block:
   the parser will silently drop the proposal.
 - If the setup does NOT meet proposal criteria, do NOT output the block at all.
   A missing block means "Whiskey assessed but did not propose" — that is valid output.
-"#,
-    WHISKEY_BREAKEVEN_CLAUSE,
-    WHISKEY_REGIME_CLAUSE,
-    WHISKEY_DSR_CLAUSE,
-    WHISKEY_COMMISSION_DRAG_TEMPLATE,
-);
+"#;
 
 /// Reflection prompt — process-grade BEFORE P&L (§11 #10).
 const WHISKEY_REFLECTION_PROMPT: &str = r#"You just finished a turn with the user inside Whiskey trading-mentor mode.
@@ -719,7 +729,7 @@ mod tests {
 
     #[test]
     fn system_prefix_contains_breakeven_gate() {
-        let prefix = WHISKEY_SYSTEM_PREFIX;
+        let prefix = WHISKEY_SYSTEM_PREFIX.as_str();
         assert!(
             prefix.contains("W_breakeven"),
             "system prefix must include break-even formula"
@@ -736,7 +746,7 @@ mod tests {
 
     #[test]
     fn system_prefix_contains_regime_clause() {
-        let prefix = WHISKEY_SYSTEM_PREFIX;
+        let prefix = WHISKEY_SYSTEM_PREFIX.as_str();
         assert!(
             prefix.contains("VWAP"),
             "system prefix must require VWAP regime input"
@@ -753,7 +763,7 @@ mod tests {
 
     #[test]
     fn system_prefix_contains_dsr_clause() {
-        let prefix = WHISKEY_SYSTEM_PREFIX;
+        let prefix = WHISKEY_SYSTEM_PREFIX.as_str();
         assert!(
             prefix.contains("Deflated Sharpe Ratio") || prefix.contains("DSR"),
             "system prefix must reference Deflated Sharpe Ratio (Bailey/López de Prado)"
@@ -766,7 +776,7 @@ mod tests {
 
     #[test]
     fn system_prefix_contains_commission_drag_template() {
-        let prefix = WHISKEY_SYSTEM_PREFIX;
+        let prefix = WHISKEY_SYSTEM_PREFIX.as_str();
         assert!(
             prefix.contains("Commission drag"),
             "system prefix must include commission drag template"

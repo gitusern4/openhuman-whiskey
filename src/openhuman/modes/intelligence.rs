@@ -253,14 +253,14 @@ pub fn sample_size_tier(n: u32) -> Tier {
 /// The tier imposes a cap; the grade drives the base fraction.
 /// A Hypothesis setup can never exceed 0.50 regardless of grade.
 pub fn position_size_multiplier(grade: Grade, tier: Tier) -> f64 {
-    let grade_frac = match grade {
+    let grade_frac: f64 = match grade {
         Grade::APlus => 1.00,
         Grade::A => 0.75,
         Grade::B => 0.50,
         Grade::C => 0.25,
         Grade::Pass => 0.00,
     };
-    let tier_cap = match tier {
+    let tier_cap: f64 = match tier {
         Tier::Hypothesis => 0.50,
         Tier::Developing => 0.75,
         Tier::Validated => 1.00,
