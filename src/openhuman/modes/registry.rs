@@ -27,7 +27,7 @@ use parking_lot::RwLock;
 use serde::Serialize;
 
 use super::persistence;
-use super::{DefaultMode, Mode, ModeId, SharedMode, WhiskeyMode};
+use super::{DefaultMode, ModeId, SharedMode, WhiskeyMode};
 
 /// Snapshot of one mode for the settings UI dropdown.
 ///

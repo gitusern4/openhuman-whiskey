@@ -165,7 +165,7 @@ fn load_or_refresh(path: &Path) -> Option<String> {
     }
     let mtime = metadata.modified().ok()?;
 
-    let mut cache = CACHE.lock().ok()?;
+    let cache = CACHE.lock().ok()?;
     if let Some(entry) = cache.get(path) {
         if entry.mtime == mtime {
             return Some(entry.truncated_content.clone());
