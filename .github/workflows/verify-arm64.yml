@@ -60,6 +60,32 @@ jobs:
           targets: aarch64-pc-windows-msvc
           components: rustfmt,clippy
 
+      # cef-dll-sys's build.rs compiles a C++ wrapper (libcef_dll_wrapper) via
+      # CMake + Ninja, driven by the `cc` crate. On windows-latest the runner
+      # auto-loads the x64-hosted, x64-targeting MSVC env, so for cross-compile
+      # to aarch64-pc-windows-msvc we have to swap in the amd64_arm64 toolset
+      # (x64 host -> ARM64 target). Without this the wrapper builds with the
+      # x64 cl.exe + x64 Windows SDK libs and breaks the cef-dll-sys C++ link
+      # against ARM64-targeted Rust object files.
+      - name: Setup MSVC cross-compile env (amd64_arm64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      # Pin the cc / cmake-rs crates to the ARM64-cross cl.exe/lib.exe that
+      # vcvars just put on PATH. ilammy/msvc-dev-cmd@v1 sets PATH/INCLUDE/LIB
+      # for the current and subsequent steps, so the unqualified tool names
+      # resolve to the Hostx64\arm64 binaries.
+      - name: Export ARM64 cross-compile env for cc / cmake-rs
+        shell: bash
+        run: |
+          {
+            echo "CC_aarch64_pc_windows_msvc=cl.exe"
+            echo "CXX_aarch64_pc_windows_msvc=cl.exe"
+            echo "AR_aarch64_pc_windows_msvc=lib.exe"
+            echo "CMAKE_GENERATOR=Ninja"
+          } >> "$GITHUB_ENV"
+
       # CEF download is ~400MB; cache per-target so reruns are fast.
       - name: Cache CEF binary distribution
         uses: actions/cache@v4
