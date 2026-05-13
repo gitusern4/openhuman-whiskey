@@ -12,6 +12,16 @@
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Mutex;
+
+/// Serializes any test that reads or writes a process-wide env var.
+/// `EnvGuard` Drop-restores the var, but tests run in parallel by
+/// default — two parallel `set_var` calls race regardless of guards.
+/// Acquire this lock at the top of any env-mutating test.
+/// Whiskey CI 2026-05-13: `core_bin_env_override_takes_precedence_when_exists`
+/// was reading the value set by its sibling `_graceful_when_nonexistent`
+/// because both ran in parallel and only one Drop ran in time.
+static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// Guard to temporarily set/unset environment variables.
 struct EnvGuard {
@@ -64,6 +74,7 @@ fn create_fake_core_binary(dir: &std::path::Path, name: &str) -> PathBuf {
 /// Test that OPENHUMAN_CORE_BIN override takes precedence when file exists.
 #[test]
 fn core_bin_env_override_takes_precedence_when_exists() {
+    let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let temp_dir = std::env::temp_dir().join("openhuman-core-test-override");
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).expect("create temp dir");
@@ -91,6 +102,7 @@ fn core_bin_env_override_takes_precedence_when_exists() {
 /// Test that OPENHUMAN_CORE_BIN override gracefully handles non-existent files.
 #[test]
 fn core_bin_env_override_graceful_when_nonexistent() {
+    let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     // Set env override to a non-existent path
     let _guard = EnvGuard::set("OPENHUMAN_CORE_BIN", "/nonexistent/path/openhuman-core");
 
@@ -134,6 +146,7 @@ fn core_bin_packaged_linux_paths_order() {
 /// Test core port configuration via environment variable.
 #[test]
 fn core_port_env_configuration() {
+    let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     // Test default port
     {
         let _guard = EnvGuard::unset("OPENHUMAN_CORE_PORT");
@@ -182,6 +195,7 @@ fn core_rpc_url_format() {
 /// Test OPENHUMAN_CORE_RPC_URL environment variable handling.
 #[test]
 fn core_rpc_url_env_override() {
+    let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     // Test with env var set
     let _guard = EnvGuard::set("OPENHUMAN_CORE_RPC_URL", "http://localhost:8888/rpc");
     let url = std::env::var("OPENHUMAN_CORE_RPC_URL").unwrap();

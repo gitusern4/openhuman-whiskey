@@ -14,6 +14,10 @@ import DictationHotkeyManager from './components/DictationHotkeyManager';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import MeshGradient from './components/MeshGradient';
+// Whiskey fork — first-run onboarding wizard. Rendered as a sibling overlay
+// inside AppShell (inside the Router) so it can call useNavigate. The wizard
+// is invisible once onboarding_status.completed = true.
+import OnboardingWizard from './components/onboarding/OnboardingWizard';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
 import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
@@ -190,6 +194,11 @@ function AppShell() {
       {!isBootstrapping && !onOnboardingRoute && (
         <AppWalkthrough onboarded={!!snapshot.onboardingCompleted} />
       )}
+      {/* Whiskey fork — first-run onboarding wizard overlay. Mounted outside
+          the route tree so it survives route transitions during the wizard.
+          OnboardingWizard self-suppresses when onboarding_status.completed=true,
+          so this is a no-op on every launch after the first. */}
+      <OnboardingWizard />
     </div>
   );
 }

@@ -5,9 +5,16 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 
 import App from './App';
+import { applyStoredTheme } from './hooks/useTheme';
 import './index.css';
 import { getCoreStateSnapshot } from './lib/coreState/store';
 import MascotWindowApp from './mascot/MascotWindowApp';
+// Whiskey fork — Windows mascot path. Distinct from MascotWindowApp
+// (which is the macOS NSPanel-hosted passive mascot). The Windows
+// version is hosted inside a real Tauri WebviewWindow with
+// `transparent + always_on_top + decorations(false)`, so it can use
+// the full Tauri IPC (drag, save-position, activate-main).
+import WindowsMascotApp from './mascot/WindowsMascotApp';
 import OverlayApp from './overlay/OverlayApp';
 import './polyfills';
 import { initSentry } from './services/analytics';
@@ -18,11 +25,26 @@ import { getActiveUserIdFromCore } from './utils/tauriCommands';
 
 setStoreForApiClient(() => getCoreStateSnapshot().snapshot.sessionToken);
 
-// The floating mascot is hosted in a native macOS NSPanel + WKWebView
-// that lives OUTSIDE Tauri's runtime (the vendored tauri-cef can't render
-// transparent windowed-mode browsers). That webview can't read a Tauri
-// window label, so the Rust shell appends `?window=mascot` to the URL it
-// loads. Detect it before we touch any Tauri APIs.
+// Window-routing branch.
+//
+//  - `?window=mascot`     → macOS native NSPanel + WKWebView host
+//                           (lives OUTSIDE Tauri's runtime; the vendored
+//                           tauri-cef can't render transparent
+//                           windowed-mode browsers on macOS, so the
+//                           panel is built natively in
+//                           `app/src-tauri/src/mascot_native_window.rs`).
+//                           Webview can't read a Tauri label so the
+//                           Rust shell appends the query string itself.
+//  - `?window=mascot-win`  → Windows Tauri WebviewWindow with
+//                           `transparent + always_on_top + decorations
+//                           (false)` (Whiskey fork). Built dynamically
+//                           in `app/src-tauri/src/mascot_windows_window.rs`
+//                           with a query string parallel to the macOS
+//                           path so both branches funnel through this
+//                           same `isStandaloneWindow` short-circuit.
+//
+// We must read the query string BEFORE touching any Tauri APIs because
+// the macOS panel host has no Tauri runtime at all.
 const urlWindowParam = (() => {
   try {
     return new URLSearchParams(window.location.search).get('window');
@@ -31,13 +53,16 @@ const urlWindowParam = (() => {
   }
 })();
 const isMascotWindow = urlWindowParam === 'mascot';
+const isWindowsMascotWindow = urlWindowParam === 'mascot-win';
 const currentWindowLabel = isMascotWindow
   ? 'mascot'
-  : tauriRuntimeAvailable()
-    ? getCurrentWindow().label
-    : 'main';
+  : isWindowsMascotWindow
+    ? 'mascot-win'
+    : tauriRuntimeAvailable()
+      ? getCurrentWindow().label
+      : 'main';
 const isOverlayWindow = currentWindowLabel === 'overlay';
-const isStandaloneWindow = isOverlayWindow || isMascotWindow;
+const isStandaloneWindow = isOverlayWindow || isMascotWindow || isWindowsMascotWindow;
 
 const ensureDefaultHashRoute = () => {
   const hash = window.location.hash;
@@ -52,6 +77,11 @@ const ensureDefaultHashRoute = () => {
 
 // Initialize Sentry early (before React renders)
 initSentry();
+
+// Apply persisted theme before React mounts to prevent FOUC
+// (flash of unstyled content). Sets data-tk-theme on <html> element.
+applyStoredTheme();
+
 document.documentElement.dataset.window = currentWindowLabel;
 
 if (!isStandaloneWindow) {
@@ -72,17 +102,28 @@ if (!isStandaloneWindow) {
 // namespace from the first storage call. (#900)
 function bootRender() {
   const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
-  const tree = isMascotWindow ? <MascotWindowApp /> : isOverlayWindow ? <OverlayApp /> : <App />;
+  const tree = isMascotWindow ? (
+    <MascotWindowApp />
+  ) : isWindowsMascotWindow ? (
+    <WindowsMascotApp />
+  ) : isOverlayWindow ? (
+    <OverlayApp />
+  ) : (
+    <App />
+  );
   root.render(<React.StrictMode>{tree}</React.StrictMode>);
 }
 
-// The mascot lives in a native WKWebView (no Tauri IPC), so
+// The macOS mascot lives in a native WKWebView (no Tauri IPC) so
 // `getActiveUserIdFromCore()` would just reject after a roundtrip and
-// delay first paint for nothing. Skip the bootstrap entirely in that
-// path — the mascot UI doesn't read user-scoped storage anyway.
-const activeUserBootstrap = isMascotWindow
-  ? Promise.resolve<string | null>(null)
-  : getActiveUserIdFromCore();
+// delay first paint for nothing. The Windows mascot is a real Tauri
+// WebviewWindow but doesn't render any user-scoped UI either, so we
+// skip the user bootstrap on both mascot paths to keep first paint
+// fast and avoid an unnecessary IPC.
+const activeUserBootstrap =
+  isMascotWindow || isWindowsMascotWindow
+    ? Promise.resolve<string | null>(null)
+    : getActiveUserIdFromCore();
 
 activeUserBootstrap
   .then(id => primeActiveUserId(id))

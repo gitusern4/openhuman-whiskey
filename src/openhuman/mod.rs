@@ -41,6 +41,11 @@ pub mod meet;
 pub mod meet_agent;
 pub mod memory;
 pub mod migration;
+// Whiskey fork: switchable agent personalities. Default = no-op shim;
+// Whiskey = trading-mentor mode. Non-default modes inject system-prompt
+// prefix in providers::router and swap reflection prompts in
+// learning::reflection + heartbeat::engine.
+pub mod modes;
 pub mod node_runtime;
 pub mod notifications;
 pub mod overlay;

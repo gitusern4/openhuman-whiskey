@@ -5,6 +5,11 @@ pub mod schema;
 mod schemas;
 pub mod traits;
 pub(crate) mod user_filter;
+// Whiskey fork additions live in their own subdir to keep upstream
+// merges clean. New tools registered here are visible to all modes;
+// per-mode visibility is enforced at the router layer via
+// Mode::tool_allowlist().
+pub mod whiskey;
 
 #[path = "impl/mod.rs"]
 pub(crate) mod implementations;

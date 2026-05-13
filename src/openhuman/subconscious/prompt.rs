@@ -12,6 +12,14 @@ const IDENTITY_EXCERPT_CHARS: usize = 2000;
 
 /// Build the per-tick evaluation prompt. The local model evaluates each due
 /// task against the situation report and returns a per-task decision.
+///
+/// Whiskey fork: when the active mode supplies a
+/// `heartbeat_prompt_override`, it replaces the upstream evaluation
+/// preamble (the "You are the background awareness layer..." schema
+/// instructions). The task list, situation report, and JSON output
+/// schema are still appended below so the engine still receives a
+/// well-formed evaluation. DefaultMode returns `None` → upstream
+/// behaviour is byte-identical.
 pub fn build_evaluation_prompt(
     tasks: &[SubconsciousTask],
     situation_report: &str,
@@ -23,13 +31,21 @@ pub fn build_evaluation_prompt(
         .collect::<Vec<_>>()
         .join("\n");
 
+    let mode = crate::openhuman::modes::active_mode();
+    let upstream_preamble = "# Subconscious Loop — Task Evaluation\n\n\
+        You are the background awareness layer. You run periodically to evaluate\n\
+        user-defined tasks against the current workspace state.";
+    // WHISKEY_AUDIT.md L7: prefer the active mode's heartbeat override
+    // when present, otherwise fall back to the upstream preamble.
+    let preamble: String = mode
+        .heartbeat_prompt_override()
+        .map(str::to_string)
+        .unwrap_or_else(|| upstream_preamble.to_string());
+
     format!(
         r#"{identity_context}
 
-# Subconscious Loop — Task Evaluation
-
-You are the background awareness layer. You run periodically to evaluate
-user-defined tasks against the current workspace state.
+{preamble}
 
 ## Due tasks
 
@@ -341,5 +357,80 @@ mod tests {
     fn identity_context_loads_or_falls_back() {
         let ctx = load_identity_context(std::path::Path::new("/nonexistent"));
         assert!(ctx.contains("OpenHuman"));
+    }
+
+    // ── Whiskey fork: heartbeat preamble swap by active mode ─────────────
+    //
+    // The active mode is a process-global; tests that mutate it must
+    // serialize. Mirrors the in-file `static TEST_LOCK: Mutex<()>`
+    // pattern used by `modes/registry.rs` and `tools/user_filter.rs`.
+    mod heartbeat_override_tests {
+        use super::*;
+        use crate::openhuman::modes::{set_active_mode, DefaultMode, WhiskeyMode};
+        use std::sync::Mutex;
+
+        static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+        fn reset_to_default() {
+            let _ = set_active_mode(DefaultMode::ID);
+        }
+
+        #[test]
+        fn default_mode_uses_upstream_evaluation_preamble() {
+            let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            reset_to_default();
+            let tasks = vec![test_task("t1", "Check email")];
+            let prompt = build_evaluation_prompt(&tasks, "state", "identity");
+            // Upstream preamble fragment — present iff the override was
+            // not consulted.
+            assert!(
+                prompt.contains("You are the background awareness layer."),
+                "default mode must use upstream preamble; got: {prompt}"
+            );
+            // Schema/scaffolding (turn-context sections) is still
+            // appended below the preamble in either mode.
+            assert!(prompt.contains("[t1] Check email"));
+            assert!(prompt.contains("evaluations"));
+        }
+
+        #[test]
+        fn whiskey_mode_uses_heartbeat_prompt_override() {
+            let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            let _ = set_active_mode(WhiskeyMode::ID);
+            let tasks = vec![test_task("t1", "Check trades")];
+            let prompt = build_evaluation_prompt(&tasks, "state", "identity");
+            // Whiskey heartbeat preamble fragment (verbatim from
+            // `WHISKEY_HEARTBEAT_PROMPT` in modes/whiskey.rs).
+            assert!(
+                prompt.contains("Periodic background reflection while Whiskey mode is active"),
+                "whiskey mode must inject heartbeat override; got: {prompt}"
+            );
+            // Upstream preamble's distinctive sentence must NOT appear
+            // when the override is in effect.
+            assert!(
+                !prompt.contains("You are the background awareness layer."),
+                "override must replace upstream preamble, not append to it"
+            );
+            // Tasks + JSON output schema are still present so the engine
+            // gets a well-formed evaluation regardless of preamble.
+            assert!(prompt.contains("[t1] Check trades"));
+            assert!(prompt.contains("evaluations"));
+            reset_to_default();
+        }
+
+        #[test]
+        fn whiskey_override_then_reset_returns_to_upstream() {
+            let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            let _ = set_active_mode(WhiskeyMode::ID);
+            let whiskey_prompt = build_evaluation_prompt(&[], "", "");
+            assert!(whiskey_prompt
+                .contains("Periodic background reflection while Whiskey mode is active"));
+
+            reset_to_default();
+            let default_prompt = build_evaluation_prompt(&[], "", "");
+            assert!(default_prompt.contains("You are the background awareness layer."));
+            assert!(!default_prompt
+                .contains("Periodic background reflection while Whiskey mode is active"));
+        }
     }
 }

@@ -2,6 +2,7 @@
 compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supported.");
 
 mod cdp;
+// Whiskey fork — order-flow Rust + Tauri command layer.
 #[cfg(target_os = "macos")]
 mod cef_preflight;
 mod cef_profile;
@@ -15,6 +16,20 @@ mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
+mod order_flow_commands;
+mod readiness_commands;
+// Whiskey fork — global hotkey to summon/hide the mascot from any
+// foreground app (default CmdOrCtrl+Shift+Space). Cross-platform; the
+// per-OS dispatch lives in `mascot_window_show` / `_hide` in this file.
+mod mascot_summon_hotkey;
+// Whiskey fork — Windows mascot path. Parallel to mascot_native_window
+// (which is macOS-only). Both are gated on their target_os; lib.rs
+// dispatches via #[cfg] branches inside mascot_window_show / hide.
+mod execution_commands;
+#[cfg(target_os = "windows")]
+mod mascot_windows_state;
+#[cfg(target_os = "windows")]
+mod mascot_windows_window;
 mod meet_audio;
 mod meet_call;
 mod meet_scanner;
@@ -26,6 +41,9 @@ mod process_recovery;
 mod screen_capture;
 mod slack_scanner;
 mod telegram_scanner;
+mod tradingview_cdp;
+mod tv_cdp_supervisor;
+mod tv_overlay;
 mod webview_accounts;
 mod webview_apis;
 mod whatsapp_scanner;
@@ -740,6 +758,32 @@ async fn register_dictation_hotkey(
     Ok(())
 }
 
+/// Register (or re-register) the global mascot-summon hotkey. Mirrors
+/// `register_dictation_hotkey` — see `mascot_summon_hotkey::register`
+/// for the rollback-on-failure semantics.
+#[tauri::command]
+async fn register_mascot_summon_hotkey(
+    app: AppHandle<AppRuntime>,
+    shortcut: String,
+) -> Result<(), String> {
+    mascot_summon_hotkey::register(app, shortcut).await
+}
+
+/// Unregister the global mascot-summon hotkey (if any).
+#[tauri::command]
+async fn unregister_mascot_summon_hotkey(app: AppHandle<AppRuntime>) -> Result<(), String> {
+    mascot_summon_hotkey::unregister_all(app).await
+}
+
+/// Read-only accessor for the project's default mascot-summon binding
+/// string. v1 always returns the compile-time default; a future
+/// revision can thread the live state in if user-side persistence
+/// lands.
+#[tauri::command]
+fn get_mascot_summon_hotkey() -> String {
+    mascot_summon_hotkey::DEFAULT_MASCOT_SUMMON_BINDING.to_string()
+}
+
 /// Unregister the global dictation hotkey (if any).
 #[tauri::command]
 async fn unregister_dictation_hotkey(app: AppHandle<AppRuntime>) -> Result<(), String> {
@@ -776,11 +820,20 @@ fn activate_main_window(app: AppHandle<AppRuntime>) -> Result<(), String> {
     show_main_window(&app)
 }
 
-/// Show the floating mascot. macOS: native NSPanel + WKWebView (so the
-/// window is actually transparent — vendored tauri-cef can't render
-/// transparent windowed-mode browsers). Loads the Vite dev URL in
-/// development and the bundled `index.html` in production. Other OSes:
-/// not yet wired up.
+/// Show the floating mascot.
+///
+/// Per-platform implementations:
+/// - macOS: native NSPanel + WKWebView (in [`mascot_native_window`]).
+///   The vendored tauri-cef runtime can't render transparent
+///   windowed-mode browsers, so this bypasses Tauri entirely.
+/// - Windows (Whiskey fork addition): Tauri WebviewWindow with
+///   `transparent + always_on_top + decorations(false)` (in
+///   [`mascot_windows_window`]). Whether the window is actually
+///   transparent depends on whether the CEF runtime honors the
+///   transparency hint on Windows; if it doesn't, the window appears
+///   as an opaque small square that's still always-on-top + draggable.
+///   A native Win32 + WebView2 fallback is the Phase-2 fix.
+/// - Linux: not yet wired.
 #[tauri::command]
 fn mascot_window_show(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[mascot-window] show requested");
@@ -788,10 +841,14 @@ fn mascot_window_show(app: AppHandle<AppRuntime>) -> Result<(), String> {
     {
         return mascot_native_window::show(&app);
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        return mascot_windows_window::show(&app);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = app;
-        Err("floating mascot window is macOS-only for now".into())
+        Err("floating mascot window is not yet wired for this platform".into())
     }
 }
 
@@ -805,20 +862,184 @@ fn mascot_window_hide(app: AppHandle<AppRuntime>) -> Result<(), String> {
         mascot_native_window::hide();
         Ok(())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        mascot_windows_window::hide(&app)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = app;
         Ok(())
     }
 }
 
+/// Whiskey fork: list every registered agent mode for the settings
+/// picker. Returns the snapshot the frontend needs to render the
+/// dropdown — id (stable, used by `set_whiskey_mode`), display_name
+/// (user-visible), description (1-line tooltip).
+#[tauri::command]
+fn list_whiskey_modes() -> Vec<openhuman_core::openhuman::modes::ModeDescriptor> {
+    openhuman_core::openhuman::modes::list_modes()
+}
+
+/// Whiskey fork: switch the process-wide active mode. The id must be
+/// one returned from [`list_whiskey_modes`]; unknown ids return an
+/// `Err` with the registered set listed for diagnostics. The next
+/// LLM request will pick up the new mode's `system_prompt_prefix`,
+/// the next reflection will pick up its `reflection_prompt_override`,
+/// etc. — see `crate::openhuman::providers::router` for the hot path.
+#[tauri::command]
+fn set_whiskey_mode(id: String) -> Result<(), String> {
+    openhuman_core::openhuman::modes::set_active_mode(&id)
+}
+
+/// Whiskey fork: read the currently-active mode id. Lets the picker
+/// highlight the right row on first paint without a separate
+/// roundtrip per mode.
+#[tauri::command]
+fn get_active_whiskey_mode_id() -> String {
+    openhuman_core::openhuman::modes::active_mode()
+        .id()
+        .to_string()
+}
+
+/// TK's Mods — compute position size from entry/stop/risk.
+/// `spec_id` maps to the baked-in spec names: "MNQ", "MES", "NQ",
+/// "ES", "MYM", "M2K", "CL", "GC", "STOCK". Unknown ids fall back to
+/// STOCK (1 dollar per 0.01-tick, generic equity assumption).
+#[tauri::command]
+fn compute_position_size(
+    entry: f64,
+    stop: f64,
+    risk_dollars: f64,
+    spec_id: String,
+) -> openhuman_core::openhuman::modes::position_sizer::SizingResult {
+    let spec = openhuman_core::openhuman::modes::position_sizer::spec_by_id(&spec_id);
+    openhuman_core::openhuman::modes::position_sizer::size_position(entry, stop, risk_dollars, spec)
+}
+
+/// TK's Mods — read the current walk-away lockout status.
+#[tauri::command]
+fn lockout_status() -> openhuman_core::openhuman::modes::lockout::LockoutStatus {
+    let state = openhuman_core::openhuman::modes::lockout::load();
+    openhuman_core::openhuman::modes::lockout::status(&state)
+}
+
+/// TK's Mods — manually trip the walk-away lockout.
+#[tauri::command]
+fn lockout_trip(reason: String) -> openhuman_core::openhuman::modes::lockout::LockoutStatus {
+    let mut state = openhuman_core::openhuman::modes::lockout::load();
+    openhuman_core::openhuman::modes::lockout::trip(&mut state, &reason);
+    openhuman_core::openhuman::modes::lockout::status(&state)
+}
+
+/// TK's Mods — arm the 5-minute force-reset cooldown. Must be called
+/// before `lockout_reset` will actually clear an active lockout. The
+/// server-side timer is the friction layer — a tilted trader cannot
+/// bypass the lockout via DevTools IPC because they still have to
+/// sit through the 5 minutes after arming.
+#[tauri::command]
+fn lockout_arm_reset() -> openhuman_core::openhuman::modes::lockout::LockoutStatus {
+    let mut state = openhuman_core::openhuman::modes::lockout::load();
+    openhuman_core::openhuman::modes::lockout::arm_force_reset(&mut state);
+    openhuman_core::openhuman::modes::lockout::status(&state)
+}
+
+/// TK's Mods — request the force-reset of an active lockout. Only
+/// honored after `lockout_arm_reset` was called AT LEAST 5 minutes
+/// ago. The server-side gate (in `lockout::request_force_reset`)
+/// is the actual enforcement — UI-level booleans don't survive an
+/// IPC bypass via DevTools console. Architect review 2026-05-12.
+#[tauri::command]
+fn lockout_reset() -> Result<openhuman_core::openhuman::modes::lockout::LockoutStatus, String> {
+    let mut state = openhuman_core::openhuman::modes::lockout::load();
+    openhuman_core::openhuman::modes::lockout::request_force_reset(&mut state)?;
+    Ok(openhuman_core::openhuman::modes::lockout::status(&state))
+}
+
+/// TK's Mods — save updated lockout config (thresholds + cooldown).
+/// Does not trip or clear a lockout — only updates the thresholds.
+#[tauri::command]
+fn lockout_set_config(
+    max_daily_loss_dollars: Option<f64>,
+    max_consecutive_losses: Option<u32>,
+    cooldown_minutes: u32,
+) -> openhuman_core::openhuman::modes::lockout::LockoutStatus {
+    let mut state = openhuman_core::openhuman::modes::lockout::load();
+    state.config.max_daily_loss_dollars = max_daily_loss_dollars;
+    state.config.max_consecutive_losses = max_consecutive_losses;
+    state.config.cooldown_minutes = cooldown_minutes;
+    openhuman_core::openhuman::modes::lockout::save(&state);
+    openhuman_core::openhuman::modes::lockout::status(&state)
+}
+
+/// TK's Mods — invalidate the `hide_risk_pct` overlay-bus cache so the
+/// next `publish_attention` call re-reads from TOML. Call after every
+/// settings save that touches `tks_mods_config`. Without this the
+/// risk-sanitizer cache stays stale until next app restart.
+#[tauri::command]
+fn tks_mods_invalidate_cache() {
+    openhuman_core::openhuman::overlay::bus::invalidate_tks_cache();
+}
+
+/// Whiskey fork — first-run onboarding status.
+/// Returns `{ completed, tv_bridge_skipped, current_step }`.
+#[tauri::command]
+fn onboarding_status() -> openhuman_core::openhuman::modes::onboarding::OnboardingStatus {
+    openhuman_core::openhuman::modes::onboarding::status()
+}
+
+/// Whiskey fork — mark a wizard step as reached (but not yet finished).
+/// `tv_bridge_skipped` tracks whether the user skipped step 2.
+#[tauri::command]
+fn onboarding_advance(step: u32, tv_bridge_skipped: bool) {
+    openhuman_core::openhuman::modes::onboarding::advance(step, tv_bridge_skipped);
+}
+
+/// Whiskey fork — mark the onboarding wizard as completed so it never
+/// auto-reopens. Sets `whiskey.onboarding.completed = true` in the
+/// persisted `onboarding.toml` file.
+#[tauri::command]
+fn onboarding_complete(tv_bridge_skipped: bool) {
+    openhuman_core::openhuman::modes::onboarding::complete(tv_bridge_skipped);
+}
+
+/// Whiskey fork: persist the mascot's current position. Called from
+/// the React mascot frontend after the user drags the window so the
+/// next launch lands in the same spot. Windows-only today; macOS uses
+/// a fixed bottom-right anchor.
+#[tauri::command]
+fn mascot_window_save_position(app: AppHandle<AppRuntime>) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        mascot_windows_window::save_current_position(&app);
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        Ok(())
+    }
+}
+
+/// Whether the floating mascot is currently shown.
+///
+/// Unified signature across platforms (takes `app` even on macOS so
+/// callers don't need a `cfg` ladder at every call site). The macOS
+/// implementation ignores `app` because the panel is owned by a
+/// thread-local outside Tauri's window registry.
 #[cfg(target_os = "macos")]
-fn mascot_native_window_is_open() -> bool {
+fn mascot_native_window_is_open(_app: &AppHandle<AppRuntime>) -> bool {
     mascot_native_window::is_open()
 }
 
-#[cfg(not(target_os = "macos"))]
-fn mascot_native_window_is_open() -> bool {
+#[cfg(target_os = "windows")]
+fn mascot_native_window_is_open(app: &AppHandle<AppRuntime>) -> bool {
+    mascot_windows_window::is_open(app)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn mascot_native_window_is_open(_app: &AppHandle<AppRuntime>) -> bool {
     false
 }
 
@@ -858,11 +1079,12 @@ fn setup_tray(app: &AppHandle<AppRuntime>) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let quit_item = MenuItem::with_id(app, "tray_quit", "Quit", true, None::<&str>)?;
-    // The floating mascot has a native NSPanel + WKWebView host, so the
-    // tray entry only does anything on macOS. Don't surface a menu item
-    // on Windows that's guaranteed to error — gate it to the platform
-    // where `mascot_window_show` actually works.
-    #[cfg(target_os = "macos")]
+    // Toggle-mascot tray entry. On macOS the floating mascot is a
+    // native NSPanel + WKWebView; on Windows (Whiskey fork addition)
+    // it's a Tauri WebviewWindow with always_on_top + transparent.
+    // Linux still has no mascot path — gate it out there to avoid a
+    // menu item that would always error.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     let menu = {
         let mascot_item = MenuItem::with_id(
             app,
@@ -873,7 +1095,7 @@ fn setup_tray(app: &AppHandle<AppRuntime>) -> tauri::Result<()> {
         )?;
         Menu::with_items(app, &[&show_item, &mascot_item, &quit_item])?
     };
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
     let icon = app
@@ -893,7 +1115,7 @@ fn setup_tray(app: &AppHandle<AppRuntime>) -> tauri::Result<()> {
             }
             "tray_toggle_mascot" => {
                 log::info!("[tray] action=toggle_mascot source=menu");
-                if mascot_native_window_is_open() {
+                if mascot_native_window_is_open(app) {
                     if let Err(err) = mascot_window_hide(app.clone()) {
                         log::error!("[tray] failed to hide mascot window: {err}");
                     }
@@ -1389,6 +1611,9 @@ pub fn run() {
         .manage(dictation_hotkeys::DictationHotkeyState(
             std::sync::Mutex::new(Vec::new()),
         ))
+        .manage(mascot_summon_hotkey::MascotSummonHotkeyState(
+            std::sync::Mutex::new(Vec::new()),
+        ))
         .manage(webview_accounts::WebviewAccountsState::default())
         .manage(notification_settings::NotificationSettingsState::new())
         .manage(PendingAppUpdateState::default());
@@ -1404,6 +1629,33 @@ pub fn run() {
     let builder = builder.manage(meet_call::MeetCallState::new());
     let builder = builder.manage(meet_audio::MeetAudioState::new());
     let builder = builder.manage(meet_video::frame_bus::MeetVideoFrameBusState::new());
+    // TradingView Desktop CDP bridge — see `tradingview_cdp.rs`. State
+    // is `Option<TvCdpSession>` so attach is idempotent and we don't
+    // hold a live WebSocket until the user explicitly attaches.
+    let builder = builder.manage(tradingview_cdp::TvCdpState::default());
+    // CDP auto-attach supervisor state — Arc so the supervisor task can
+    // hold a reference across the lifetime of the Tauri-managed state.
+    let builder = builder.manage(std::sync::Arc::new(
+        tv_cdp_supervisor::TvAutoAttachState::default(),
+    ));
+    // Order-flow state (ring buffer + cumulative delta + tags). Config
+    // is loaded from tks_mods.toml on first access via OrderFlowStore::default().
+    let builder = builder.manage(order_flow_commands::OrderFlowStore::default());
+    // In-TV overlay panel state — holds the injection lifecycle + the
+    // outbox-poll background task. See `tv_overlay.rs`.
+    let builder = builder.manage(tv_overlay::TvOverlayState::default());
+    // Whiskey execution layer — openhuman_dir, broker client, proposal store.
+    let openhuman_dir =
+        cef_profile::default_root_openhuman_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let builder = builder.manage(execution_commands::OpenhumanDir(std::sync::Arc::new(
+        openhuman_dir,
+    )));
+    let builder = builder.manage(execution_commands::TopStepClientState(std::sync::Arc::new(
+        std::sync::Mutex::new(None),
+    )));
+    let builder = builder.manage(execution_commands::ProposalStore(std::sync::Arc::new(
+        std::sync::Mutex::new(std::collections::HashMap::new()),
+    )));
     builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
@@ -1603,6 +1855,13 @@ pub fn run() {
             // until the Ready event fires. Creating the tray here would panic on
             // Linux with "GTK has not been initialized".
             log::info!("[tray] deferring tray setup to RunEvent::Ready");
+
+            // Whiskey fork — register the default mascot-summon hotkey
+            // (CmdOrCtrl+Shift+Space). Best-effort: a busy binding logs
+            // a warn here but never aborts setup. See
+            // `mascot_summon_hotkey::register_default` for the full
+            // pattern + per-OS expansion.
+            mascot_summon_hotkey::register_default(&app.handle().clone());
 
             // CEF cold-start warmup. Spawns a 1×1 hidden child webview on
             // the main window at `about:blank` so CEF's render-process /
@@ -1908,6 +2167,9 @@ pub fn run() {
             schedule_cef_profile_purge,
             register_dictation_hotkey,
             unregister_dictation_hotkey,
+            register_mascot_summon_hotkey,
+            unregister_mascot_summon_hotkey,
+            get_mascot_summon_hotkey,
             webview_accounts::webview_account_open,
             webview_accounts::webview_account_prewarm,
             webview_accounts::webview_account_close,
@@ -1934,6 +2196,65 @@ pub fn run() {
             native_notifications::show_native_notification,
             mascot_window_show,
             mascot_window_hide,
+            mascot_window_save_position,
+            // Whiskey fork — agent-mode picker bridge.
+            list_whiskey_modes,
+            set_whiskey_mode,
+            get_active_whiskey_mode_id,
+            // Whiskey fork — first-run onboarding wizard.
+            onboarding_status,
+            onboarding_advance,
+            onboarding_complete,
+            // Whiskey fork — TradingView Desktop CDP bridge.
+            // See `tradingview_cdp.rs` for the full setup story; in
+            // short, the user must launch TV Desktop with
+            // `--remote-debugging-port=9222` for these commands to
+            // resolve any targets.
+            tradingview_cdp::tv_cdp_probe,
+            tradingview_cdp::tv_cdp_attach,
+            tradingview_cdp::tv_cdp_eval,
+            tradingview_cdp::tv_cdp_get_chart_state,
+            tradingview_cdp::tv_cdp_set_symbol,
+            tradingview_cdp::tv_cdp_launch_tv,
+            tradingview_cdp::tv_cdp_detach,
+            // CDP auto-attach supervisor — enable/disable + status poll.
+            tv_cdp_supervisor::tv_cdp_set_auto_attach,
+            tv_cdp_supervisor::tv_cdp_get_auto_attach_status,
+            // TK's Mods — SL/TP overlay commands.
+            tradingview_cdp::tv_cdp_draw_sltp,
+            tradingview_cdp::tv_cdp_clear_sltp,
+            // TK's Mods — order-flow CDP introspection.
+            tradingview_cdp::tv_cdp_get_order_flow_state,
+            // TK's Mods — TV overlay panel (injected into TV's renderer via CDP).
+            tv_overlay::tv_overlay_inject,
+            tv_overlay::tv_overlay_remove,
+            tv_overlay::tv_overlay_send_state,
+            tv_overlay::tv_overlay_drain_outbox,
+            // TK's Mods — position sizer + walk-away lockout.
+            compute_position_size,
+            lockout_status,
+            lockout_trip,
+            lockout_arm_reset,
+            lockout_reset,
+            lockout_set_config,
+            tks_mods_invalidate_cache,
+            // Order-flow — config, bar recording, tagging, preset apply.
+            order_flow_commands::order_flow_get_config,
+            order_flow_commands::order_flow_set_config,
+            order_flow_commands::order_flow_record_bar,
+            order_flow_commands::order_flow_tag_active_trade,
+            order_flow_commands::order_flow_apply_preset,
+            // Whiskey intelligence layer — pre-trade readiness check.
+            readiness_commands::whiskey_readiness_check,
+            // Whiskey execution layer commands (Steps 5, 7, 8, 9, 10).
+            execution_commands::kill_switch_trigger,
+            execution_commands::kill_switch_status,
+            execution_commands::kill_switch_request_reset,
+            execution_commands::submit_bracket_order,
+            execution_commands::confirm_bracket_order,
+            execution_commands::topstepx_authenticate,
+            execution_commands::whiskey_session_state,
+            execution_commands::whiskey_propose_trade,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
             meet_call::meet_call_open_window,

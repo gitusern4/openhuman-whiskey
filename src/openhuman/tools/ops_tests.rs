@@ -470,6 +470,16 @@ fn all_tools_registers_node_exec_when_node_enabled() {
     // `npm_exec` must appear in the registry. Regression guard for the
     // skills integration — if this fires, managed-node skills silently
     // lose both tools.
+    //
+    // WHISKEY_AUDIT.md follow-up: pin the active mode to default for
+    // the duration of this test. The Whiskey-fork tool-allowlist
+    // filter runs at the end of `all_tools_with_runtime` and would
+    // strip `node_exec` if a parallel test left WhiskeyMode active.
+    // The shared `ActiveModeGuard` serializes the mode mutation and
+    // restores prior state on drop (including on panic).
+    let _mode_guard = crate::openhuman::modes::ActiveModeGuard::new();
+    let _ = crate::openhuman::modes::set_active_mode(crate::openhuman::modes::DefaultMode::ID);
+
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let mem_cfg = MemoryConfig {

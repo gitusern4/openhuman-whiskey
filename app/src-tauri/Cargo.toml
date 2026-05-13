@@ -97,6 +97,9 @@ sentry = { version = "0.47.0", default-features = false, features = ["backtrace"
 anyhow = "1.0"
 parking_lot = "0.12"
 chrono = "0.4"
+# Whiskey execution layer — bracket order submission + audit.
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
 async-trait = "0.1"
 # Mascot fake-camera pipeline (meet_call): rasterizes the OpenHuman
 # mascot SVG to a PNG once, converts it to a YUV420 Y4M frame, and
@@ -140,6 +143,18 @@ objc2-web-kit = { version = "0.3.2", features = ["block2"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 notify-rust = { version = "4", default-features = false, features = ["dbus"] }
+
+# Whiskey fork — Windows-only mascot path. The vendored CEF runtime
+# can't render transparent windowed-mode browsers on macOS (see
+# `mascot_native_window.rs`); on Windows we attempt the same UX via a
+# Tauri WebviewWindow with `transparent + always_on_top`. The
+# `windows` crate is used solely to apply WDA_EXCLUDEFROMCAPTURE so
+# screen-shares don't broadcast the mascot.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 [features]
 default = []

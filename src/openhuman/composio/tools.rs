@@ -700,7 +700,7 @@ impl Tool for ComposioExecuteTool {
         let res = self.client.execute_tool(&tool, arguments).await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
         match res {
-            Ok(mut resp) => {
+            Ok(resp) => {
                 crate::core::event_bus::publish_global(
                     crate::core::event_bus::DomainEvent::ComposioActionExecuted {
                         tool: tool.clone(),

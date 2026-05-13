@@ -16,6 +16,7 @@ import LocalModelPanel from '../components/settings/panels/LocalModelPanel';
 import MemoryDataPanel from '../components/settings/panels/MemoryDataPanel';
 import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import MessagingPanel from '../components/settings/panels/MessagingPanel';
+import ModesPanel from '../components/settings/panels/ModesPanel';
 import NotificationRoutingPanel from '../components/settings/panels/NotificationRoutingPanel';
 import NotificationsPanel from '../components/settings/panels/NotificationsPanel';
 import PrivacyPanel from '../components/settings/panels/PrivacyPanel';
@@ -26,7 +27,9 @@ import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
 import TeamManagementPanel from '../components/settings/panels/TeamManagementPanel';
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
 import TeamPanel from '../components/settings/panels/TeamPanel';
+import TksModsPanel from '../components/settings/panels/TksModsPanel';
 import ToolsPanel from '../components/settings/panels/ToolsPanel';
+import TradingViewBridgePanel from '../components/settings/panels/TradingViewBridgePanel';
 import VoiceDebugPanel from '../components/settings/panels/VoiceDebugPanel';
 import VoicePanel from '../components/settings/panels/VoicePanel';
 import WebhooksDebugPanel from '../components/settings/panels/WebhooksDebugPanel';
@@ -194,6 +197,61 @@ const aiModelsSettingsItems = [
       </svg>
     ),
   },
+  {
+    // Whiskey fork — agent-mode picker (deprecated nav entry; canonical
+    // UX is via TK's Mods → AI Mode section).
+    id: 'modes',
+    title: 'Modes',
+    description: "→ moved to TK's Mods. Switch between agent personas (Default, Whiskey, …)",
+    route: 'modes',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+        />
+      </svg>
+    ),
+  },
+  {
+    // Whiskey fork — TK's Mods. All trading mods in one place: AI mode,
+    // TV bridge, SL/TP overlay, position sizer, pre-trade checklist,
+    // symbol favorites, walk-away lockout, theme, risk-hide.
+    id: 'tks-mods',
+    title: "TK's Mods",
+    description: 'All trading mods: TV bridge, position sizer, checklist, lockout, theme.',
+    route: 'tks-mods',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"
+        />
+      </svg>
+    ),
+  },
+  {
+    // Whiskey fork — TradingView Desktop CDP bridge (deprecated nav entry;
+    // canonical UX is via TK's Mods → TradingView Bridge section).
+    id: 'tradingview-bridge',
+    title: 'TradingView bridge',
+    description: "→ moved to TK's Mods. Attach Whiskey to TradingView Desktop via CDP.",
+    route: 'tradingview-bridge',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M3 3v18h18M7 14l4-4 4 4 5-5"
+        />
+      </svg>
+    ),
+  },
 ];
 
 const WrappedSettingsPage = ({ children }: { children: ReactNode }) => {
@@ -286,6 +344,12 @@ const Settings = () => {
           element={wrapSettingsPage(<NotificationRoutingPanel />)}
         />
         <Route path="ai" element={wrapSettingsPage(<AIPanel />)} />
+        {/* Whiskey fork — agent-mode picker. */}
+        <Route path="modes" element={wrapSettingsPage(<ModesPanel />)} />
+        {/* Whiskey fork — TK's Mods: themes, SL/TP overlay, risk-hide. */}
+        <Route path="tks-mods" element={wrapSettingsPage(<TksModsPanel />)} />
+        {/* Whiskey fork — TradingView Desktop CDP bridge. */}
+        <Route path="tradingview-bridge" element={wrapSettingsPage(<TradingViewBridgePanel />)} />
         <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />
         <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
         <Route
