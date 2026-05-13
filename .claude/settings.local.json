@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "PowerShell($env:Path = \"$env:USERPROFILE\\\\.cargo\\\\bin;$env:Path\"; Set-Location \"C:\\\\Users\\\\legen\\\\Documents\\\\ruflo-main\\\\src-tauri\"; cargo check 2>&1 | Select-Object -Last 80)",
+      "Bash(npm i *)",
+      "Bash(npx tsc *)",
+      "Bash(cargo check *)",
+      "Bash(winget --version)",
+      "Bash(rustup --version)",
+      "Bash(echo \"MSYS2 already installed at C:\\\\\\\\msys64\")",
+      "Bash(winget install *)",
+      "Bash(/c/msys64/usr/bin/bash.exe -lc \"pacman -Sy --noconfirm && pacman -S --noconfirm mingw-w64-x86_64-gcc\")",
+      "Bash(export PATH=\"/c/msys64/mingw64/bin:$PATH\")",
+      "Bash(rustup toolchain *)",
+      "Bash(git push --no-verify*)",
+      "Bash(gh pr*)",
+      "Bash(gh run*)",
+      "Bash(gh workflow*)",
+      "Bash(gh api*)",
+      "PowerShell(reg query \"HKLM\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\CI\\\\Policy\" 2>&1)",
+      "PowerShell(reg query \"HKLM\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\CI\\\\Protected\" 2>&1)",
+      "PowerShell(\"----\")",
+      "PowerShell(\\(Get-CimInstance Win32_OperatingSystem\\).Caption; \"----\"; Get-WindowsOptionalFeature -Online -FeatureName \"Containers-DisposableClientVM\" -ErrorAction SilentlyContinue | Select-Object FeatureName, State; \"----\"; Get-Command WindowsSandbox -ErrorAction SilentlyContinue | Select-Object Source)",
+      "WebFetch(domain:finance.yahoo.com)",
+      "WebFetch(domain:www.investing.com)"
+    ]
+  }
+}

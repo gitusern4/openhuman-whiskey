@@ -72,6 +72,26 @@ jobs:
         with:
           arch: amd64_arm64
 
+      # aws-lc-sys's CMake config hard-codes -T ClangCL (the MSBuild "ClangCL"
+      # platform toolset), so the runner needs the LLVM/ClangCL components
+      # provisioned. Confirmed from a local build attempt:
+      #   error MSB8020: The build tools for ClangCL (Platform Toolset =
+      #   'ClangCL') cannot be found.
+      # windows-latest images don't preinstall this; add it via VS Installer.
+      - name: Install ClangCL toolset for aws-lc-sys
+        shell: pwsh
+        run: |
+          $vs = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          $installPath = (& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath)
+          Write-Host "Installing ClangCL components into $installPath"
+          $p = Start-Process -FilePath $vs -ArgumentList @(
+            'modify','--installPath',"`"$installPath`"",
+            '--add','Microsoft.VisualStudio.Component.VC.Llvm.Clang',
+            '--add','Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset',
+            '--passive','--norestart','--wait'
+          ) -Wait -PassThru
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
+
       # Pin the cc / cmake-rs crates to the ARM64-cross cl.exe/lib.exe that
       # vcvars just put on PATH. ilammy/msvc-dev-cmd@v1 sets PATH/INCLUDE/LIB
       # for the current and subsequent steps, so the unqualified tool names
