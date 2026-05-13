@@ -81,8 +81,13 @@ jobs:
       - name: Install ClangCL toolset for aws-lc-sys
         shell: pwsh
         run: |
-          $vs = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
           $installPath = (& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath)
+          $clangCLDir = Join-Path $installPath 'MSBuild\Microsoft\VC\v170\Platforms\ARM64\PlatformToolsets\ClangCL'
+          if (Test-Path $clangCLDir) {
+            Write-Host "ClangCL toolset already present at $clangCLDir, skipping install."
+            exit 0
+          }
+          $vs = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
           Write-Host "Installing ClangCL components into $installPath"
           $p = Start-Process -FilePath $vs -ArgumentList @(
             'modify','--installPath',"`"$installPath`"",
@@ -90,7 +95,14 @@ jobs:
             '--add','Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset',
             '--passive','--norestart','--wait'
           ) -Wait -PassThru
-          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
+          # vs_installer commonly exits 1 when there's nothing to do or when
+          # the install completed with non-fatal warnings. 3010 = success
+          # but reboot requested. Trust the post-install file check below.
+          if (-not (Test-Path $clangCLDir)) {
+            Write-Error "ClangCL toolset not present after install attempt (exit=$($p.ExitCode))"
+            exit 1
+          }
+          Write-Host "ClangCL toolset confirmed at $clangCLDir"
 
       # Pin the cc / cmake-rs crates to the ARM64-cross cl.exe/lib.exe that
       # vcvars just put on PATH. ilammy/msvc-dev-cmd@v1 sets PATH/INCLUDE/LIB
