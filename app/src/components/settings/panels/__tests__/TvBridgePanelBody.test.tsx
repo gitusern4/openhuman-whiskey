@@ -85,7 +85,6 @@ const CHART_STATE = {
 // Mocks
 // ---------------------------------------------------------------------------
 
-type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 const mockInvoke = invoke as ReturnType<typeof vi.fn>;
 const mockListen = listen as ReturnType<typeof vi.fn>;
 

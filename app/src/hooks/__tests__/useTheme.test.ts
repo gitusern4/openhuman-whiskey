@@ -167,7 +167,6 @@ describe('Cross-tab storage event', () => {
 
 describe('localStorage failure resilience', () => {
   it('does not throw when localStorage.setItem throws (lines 82-84)', () => {
-    const original = localStorage.setItem.bind(localStorage);
     vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => {
       throw new Error('QuotaExceededError');
     });
