@@ -235,9 +235,98 @@ fn default_whiskey_memory_root() -> PathBuf {
 // dynamically at runtime via `additional_memory_roots()` so the user's
 // evolving catalog steers behaviour — these prompts only set tone, scope,
 // and the never-execute guardrail.
+//
+// Intelligence layer (INTELLIGENCE_SYNTHESIS.md §11 items 1, 2, 8, 9, 10):
+// - §11 #1: break-even win-rate gate with formula displayed every proposal.
+// - §11 #2: regime classification required before any grade above B.
+// - §11 #8: DSR-awareness disclosure for backtested setups.
+// - §11 #9: commission-drag template mandatory in every proposal.
+// - §11 #10: process-grade before P&L in post-trade summaries.
 // ---------------------------------------------------------------------------
 
-const WHISKEY_SYSTEM_PREFIX: &str = r#"You are Whiskey — the user's trading mentor.
+/// Break-even math clause injected into every trade proposal (§11 #1).
+///
+/// The model must compute and display W_breakeven for every proposal.
+/// Formula: W_breakeven = 1/(1+R) + commission_drag_R.
+/// Trade is only valid if P(win | signals) > W_breakeven + 0.07 (7-pt cushion).
+const WHISKEY_BREAKEVEN_CLAUSE: &str = r#"
+## Break-even win-rate gate (mandatory — §1 of INTELLIGENCE_SYNTHESIS.md)
+
+Every trade proposal MUST compute and display the break-even win rate:
+
+  W_breakeven = 1 / (1 + R_multiple) + commission_drag_R
+
+Example at 2R target with $50 risk + $4.20 RT commission ($0.084R drag):
+  W_breakeven = 1/(1+2) + 0.084 = 0.333 + 0.084 = 0.417 (41.7%)
+  Minimum threshold = W_breakeven + 0.07 = 48.7%
+
+HARD RULE: If your estimated P(win | signals) ≤ W_breakeven + 0.07, output
+"Pass — insufficient edge above base rate" and show the math. Do NOT propose
+the trade. This is non-negotiable regardless of how good the setup feels.
+"#;
+
+/// Regime classification clause (§11 #2).
+///
+/// Three regime inputs are required before any setup can score above B.
+const WHISKEY_REGIME_CLAUSE: &str = r#"
+## Regime classification (required before grading — §2 of INTELLIGENCE_SYNTHESIS.md)
+
+Before any setup scores above B, you MUST establish three regime inputs:
+1. Price vs session VWAP: above (bullish bias) / below (bearish bias) / at (neutral).
+2. ATR vs 20-day ATR: expanding (higher volatility, wider stops) / contracting (tighter,
+   lower conviction) / neutral.
+3. Time-of-day bucket: ORB (09:30–10:30) / AM-trend (10:30–11:30) / lunch (11:30–13:30) /
+   PM-trend (13:30–15:00) / close-ramp (15:00–16:00).
+
+If any of the three inputs is unknown or the setup is misaligned with the regime
+(e.g. fade setup during expansion + close-ramp), auto-downgrade to B or lower.
+Do not proceed to A/A+ grading without all three confirmed.
+"#;
+
+/// DSR-awareness clause for backtested setups (§11 #8).
+///
+/// Reference: Bailey & López de Prado (2014) Deflated Sharpe Ratio paper.
+const WHISKEY_DSR_CLAUSE: &str = r#"
+## Backtested setup import — DSR disclosure required (§8 of INTELLIGENCE_SYNTHESIS.md)
+
+Any setup imported into the playbook from external backtesting MUST state:
+- N_variants: the number of parameter combinations tested before selecting this one.
+- Out-of-sample period: the date range held out for validation (not used in fitting).
+- Reference: Bailey & López de Prado (2014) "The Deflated Sharpe Ratio" (JPM 2014)
+  establishes that a Sharpe ratio computed over N variants requires deflation by
+  approximately sqrt(ln(N)) — a 10-variant backtest inflates Sharpe by ~1.5×.
+
+If a setup lacks both N_variants and an out-of-sample period, treat its historical
+win rate as a Hypothesis-tier estimate (max grade B, 50% size cap) until live
+forward-test data accumulates to N ≥ 20 instances.
+"#;
+
+/// Commission-drag display template (§11 #9).
+///
+/// Must appear verbatim (with values filled in) in every trade proposal.
+const WHISKEY_COMMISSION_DRAG_TEMPLATE: &str = r#"
+## Commission drag (mandatory in every proposal — §9 of INTELLIGENCE_SYNTHESIS.md)
+
+Every trade proposal must include this block with actual values filled in:
+
+  Commission drag = $[RT_COMMISSION] / $[DOLLAR_RISK] risk = [COMM_R]R.
+  Required gross expectancy: >[GROSS_EXP]R to net +0.1R after commissions.
+
+Standard MNQ/MES values (adjust for your broker):
+  - MNQ RT commission ≈ $4.20 → at $50 risk = 0.084R drag.
+    Required gross expectancy: >0.184R to net +0.1R.
+  - MES RT commission ≈ $4.20 → at $100 risk = 0.042R drag.
+    Required gross expectancy: >0.142R to net +0.1R.
+
+Never propose a setup where the expected gross edge does not clear this bar.
+"#;
+
+/// Full Whiskey system prompt prefix, composed from individual clause constants.
+///
+/// Composed at module load time as a `&'static str`-equivalent via `concat!`.
+/// No runtime allocation.
+const WHISKEY_SYSTEM_PREFIX: &str = concat!(
+    r#"You are Whiskey — the user's trading mentor.
 
 Identity:
 - You are not a generic assistant. You are a senior trader who took the
@@ -317,10 +406,24 @@ Rules for the proposal block:
   the parser will silently drop the proposal.
 - If the setup does NOT meet proposal criteria, do NOT output the block at all.
   A missing block means "Whiskey assessed but did not propose" — that is valid output.
-"#;
+"#,
+    WHISKEY_BREAKEVEN_CLAUSE,
+    WHISKEY_REGIME_CLAUSE,
+    WHISKEY_DSR_CLAUSE,
+    WHISKEY_COMMISSION_DRAG_TEMPLATE,
+);
 
+/// Reflection prompt — process-grade BEFORE P&L (§11 #10).
 const WHISKEY_REFLECTION_PROMPT: &str = r#"You just finished a turn with the user inside Whiskey trading-mentor mode.
 Reflect ONLY on the trading dimension of what happened. Output JSON with:
+- process_score: object with scores 1–5 for each dimension BEFORE mentioning P&L:
+    setup_quality, entry_timing, size_discipline, stop_discipline,
+    exit_discipline, journal_completeness.
+  Average these six scores. State the average first.
+  Example: {"setup_quality": 4, "entry_timing": 3, "size_discipline": 5,
+             "stop_discipline": 4, "exit_discipline": 4, "journal_completeness": 3,
+             "average": 3.8}
+- pnl_result: P&L in R-multiples (SECOND — after process score).
 - observations: factual notes about the user's current trade or thinking.
 - patterns: any pattern_log.md categories that fired this turn (revenge,
   FOMO, oversize, disposition, tilt). Empty list if none — do NOT invent.
@@ -329,9 +432,11 @@ Reflect ONLY on the trading dimension of what happened. Output JSON with:
 - user_reflections: explicit user self-statements about their trading
   (verbatim or near-verbatim). Empty if none.
 
+CRITICAL: process_score must appear BEFORE pnl_result in both the JSON key
+order and in any plain-English commentary. P&L is secondary to process quality.
 Do not include market predictions, generic trading advice, or content
 unrelated to this user's playbook + covenant. If the turn was off-topic,
-return all-empty arrays.
+return all-empty arrays / null process_score.
 "#;
 
 // WHISKEY_AUDIT.md H5: the previous version of this prompt instructed
@@ -343,6 +448,8 @@ return all-empty arrays.
 // the user's curated playbook files, both of which actually exist.
 // When the screen-watch engine ships, restore the screen_intelligence
 // reference here.
+//
+// Intelligence layer (§11 #10): process-grade before P&L added to heartbeat.
 const WHISKEY_HEARTBEAT_PROMPT: &str = r#"Periodic background reflection while Whiskey mode is active.
 Look ONLY at the user's existing playbook files (whiskey_playbook.md,
 pattern_log.md, trade_log.md) and any new Memory Tree updates since the
@@ -356,7 +463,11 @@ Surface ONLY:
 2. A+ catalog setups in whiskey_playbook.md that the user has noted
    matching market conditions for, and that have not yet been entered
    in this session (cite the specific catalog entry by ID).
-Emit a short overlay-attention message ONLY when one of those two
+3. If a recent completed trade is in memory: state the process score
+   (1–5 average across the six dimensions) BEFORE mentioning P&L.
+   Format: "Process: X.X/5. P&L: +/-YR."
+
+Emit a short overlay-attention message ONLY when one of those three
 conditions has clear, source-cited evidence. Stay silent otherwise.
 Never alert just to be helpful. Never report on data you cannot cite.
 "#;
@@ -601,6 +712,95 @@ mod tests {
             resolved.file_name().is_some(),
             "expected a real path leaf, got {}",
             resolved.display()
+        );
+    }
+
+    // ── intelligence-layer prompt tests ───────────────────────────────────
+
+    #[test]
+    fn system_prefix_contains_breakeven_gate() {
+        let prefix = WHISKEY_SYSTEM_PREFIX;
+        assert!(
+            prefix.contains("W_breakeven"),
+            "system prefix must include break-even formula"
+        );
+        assert!(
+            prefix.contains("1 / (1 + R_multiple)"),
+            "system prefix must show W_breakeven formula"
+        );
+        assert!(
+            prefix.contains("7-pt cushion") || prefix.contains("0.07"),
+            "system prefix must cite the 7-point cushion"
+        );
+    }
+
+    #[test]
+    fn system_prefix_contains_regime_clause() {
+        let prefix = WHISKEY_SYSTEM_PREFIX;
+        assert!(
+            prefix.contains("VWAP"),
+            "system prefix must require VWAP regime input"
+        );
+        assert!(
+            prefix.contains("ATR vs 20-day ATR"),
+            "system prefix must require ATR regime input"
+        );
+        assert!(
+            prefix.contains("Time-of-day bucket") || prefix.contains("time-of-day bucket"),
+            "system prefix must require time-of-day bucket"
+        );
+    }
+
+    #[test]
+    fn system_prefix_contains_dsr_clause() {
+        let prefix = WHISKEY_SYSTEM_PREFIX;
+        assert!(
+            prefix.contains("Deflated Sharpe Ratio") || prefix.contains("DSR"),
+            "system prefix must reference Deflated Sharpe Ratio (Bailey/López de Prado)"
+        );
+        assert!(
+            prefix.contains("N_variants") || prefix.contains("out-of-sample"),
+            "system prefix must require N_variants and out-of-sample disclosure"
+        );
+    }
+
+    #[test]
+    fn system_prefix_contains_commission_drag_template() {
+        let prefix = WHISKEY_SYSTEM_PREFIX;
+        assert!(
+            prefix.contains("Commission drag"),
+            "system prefix must include commission drag template"
+        );
+        assert!(
+            prefix.contains("0.184R"),
+            "system prefix must cite the 0.184R gross expectancy threshold"
+        );
+    }
+
+    #[test]
+    fn reflection_prompt_puts_process_score_before_pnl() {
+        let prompt = WHISKEY_REFLECTION_PROMPT;
+        let process_pos = prompt.find("process_score").unwrap_or(usize::MAX);
+        let pnl_pos = prompt.find("pnl_result").unwrap_or(usize::MAX);
+        assert!(
+            process_pos < pnl_pos,
+            "process_score must appear before pnl_result in reflection prompt"
+        );
+    }
+
+    #[test]
+    fn heartbeat_prompt_references_process_score() {
+        let prompt = WHISKEY_HEARTBEAT_PROMPT;
+        assert!(
+            prompt.contains("process score") || prompt.contains("process_score"),
+            "heartbeat prompt must reference process score"
+        );
+        // P&L mention must come after process score in the same rule.
+        let process_pos = prompt.find("process score").unwrap_or(usize::MAX);
+        let pnl_pos = prompt.find("P&L").unwrap_or(usize::MAX);
+        assert!(
+            process_pos < pnl_pos,
+            "process score must appear before P&L in heartbeat prompt"
         );
     }
 }
