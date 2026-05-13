@@ -37,6 +37,7 @@
 pub mod audit;
 pub mod covenant;
 pub mod default;
+pub mod intelligence;
 pub mod kill_switch;
 pub mod lockout;
 pub mod memory_cache;
@@ -45,6 +46,7 @@ pub mod order_flow;
 pub mod persistence;
 pub mod plausibility;
 pub mod position_sizer;
+pub mod readiness;
 pub mod registry;
 pub mod risk_sanitizer;
 pub mod tks_mods_config;

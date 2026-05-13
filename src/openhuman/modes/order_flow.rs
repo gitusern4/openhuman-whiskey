@@ -392,6 +392,368 @@ pub fn lookup_preset(name: &str) -> Option<&'static [&'static str]> {
         .map(|(_, ids)| *ids)
 }
 
+// ─── intelligence-layer additions (§6 + §7 of INTELLIGENCE_SYNTHESIS.md) ────
+//
+// These functions implement the formalized order-flow detection rules from §6.
+// All are pure functions with zero side-effects; they consume slices / value
+// types and return Option/named-result types. Existing public APIs are NOT
+// modified.
+
+/// A single bar of OHLCV data (simplified from `BarDelta` — no bid/ask split
+/// required for absorption and opening-drive detection).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BarSample {
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: f64,
+}
+
+impl BarSample {
+    pub fn range(&self) -> f64 {
+        self.high - self.low
+    }
+}
+
+/// Delta-divergence signal produced by [`delta_divergence_at_swing`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct DivergenceSignalV2 {
+    /// `true` = bearish (price higher high, delta lower high).
+    pub bearish: bool,
+    /// Confidence 0.0–1.0 from the §6 formula.
+    pub confidence: f64,
+    /// Ratio of delta at recent swing to delta at prior swing.
+    pub delta_ratio: f64,
+}
+
+/// Absorption signal produced by [`absorption_at_level`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbsorptionSignal {
+    /// Confidence 0.0–1.0 capped at 0.75.
+    pub confidence: f64,
+    /// Volume ratio (bar vol / avg_vol_20).
+    pub vol_ratio: f64,
+    /// Range ratio (bar range / atr).
+    pub range_ratio: f64,
+}
+
+/// Output of [`naked_poc_magnet`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NakedPocProbability {
+    /// Distance in ATR units between current price and the prior POC.
+    pub distance_atr: f64,
+    /// P(touch within session) per §6 table.
+    pub probability: f64,
+}
+
+/// Opening type classification produced by [`opening_drive_classifier`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpeningType {
+    DriveUp,
+    DriveDown,
+    Responsive,
+    Neutral,
+}
+
+/// Composite order-flow score combining all §6 detection signals.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompositeScore {
+    /// Raw weighted sum before time-of-day adjustment (0.0–1.0).
+    pub raw: f64,
+    /// Final score after time-of-day multiplier (0.0–1.0).
+    pub adjusted: f64,
+    /// True if a post-news blackout is in effect.
+    pub news_blackout_active: bool,
+}
+
+// ── time-of-day constants (§6 + §7) ──────────────────────────────────────────
+
+/// Time-of-day score multiplier table per §6.
+/// Each entry: (hour_et_start, hour_et_end_exclusive, multiplier).
+/// Gaps between windows use 1.0 (neutral).
+pub const TIME_OF_DAY_MULTIPLIER: &[(f64, f64, f64)] = &[
+    (9.5, 10.5, 1.10),  // ORB window (09:30–10:30 ET)
+    (11.5, 13.5, 0.50), // Lunch window (11:30–13:30 ET)
+    (15.0, 16.0, 1.15), // Close-ramp window (15:00–16:00 ET)
+];
+
+/// Return the time-of-day multiplier for `hour_et` (e.g. 9.5 = 09:30 ET).
+/// Falls back to 1.0 for hours not covered by any window.
+pub fn time_of_day_factor(hour_et: f64) -> f64 {
+    for &(start, end, mult) in TIME_OF_DAY_MULTIPLIER {
+        if hour_et >= start && hour_et < end {
+            return mult;
+        }
+    }
+    1.0
+}
+
+/// Return `true` if a 60-second post-news blackout is still active.
+///
+/// `is_high_impact_news` should be `true` for FOMC/NFP/CPI events.
+/// Timestamps are Unix seconds.
+pub fn news_blackout_until(last_news_utc: i64, now_utc: i64, is_high_impact_news: bool) -> bool {
+    if !is_high_impact_news {
+        return false;
+    }
+    (now_utc - last_news_utc).abs() < 60
+}
+
+// ── §6 detection functions ────────────────────────────────────────────────────
+
+/// Detect delta divergence at a price swing.
+///
+/// Scans `prices` and `deltas` over the trailing `lookback` bars,
+/// finds the most recent and prior swing-high or swing-low, and
+/// compares the directional delta reading at each.
+///
+/// Returns `None` when there are fewer than 3 bars in the lookback or
+/// no pair of swing-highs/lows is found.
+///
+/// Confidence formula (§6):
+/// ```text
+/// delta_ratio = |delta_at_recent| / (|delta_at_prior| + 1)
+/// base_confidence = min(0.35 + delta_ratio * 0.25, 0.60)
+/// lunch_penalty: ×0.50 when hour_et ∈ [11.5, 13.5)
+/// ```
+pub fn delta_divergence_at_swing(
+    prices: &[f64],
+    deltas: &[i64],
+    lookback: usize,
+) -> Option<DivergenceSignalV2> {
+    let n = prices.len().min(deltas.len()).min(lookback);
+    if n < 3 {
+        return None;
+    }
+    let prices = &prices[prices.len() - n..];
+    let deltas = &deltas[deltas.len() - n..];
+
+    // Collect swing-highs (local maxima in prices).
+    let mut swing_highs: Vec<usize> = Vec::new();
+    for i in (1..n - 1).rev() {
+        if prices[i] > prices[i - 1] && prices[i] > prices[i + 1] {
+            swing_highs.push(i);
+            if swing_highs.len() == 2 {
+                break;
+            }
+        }
+    }
+
+    if swing_highs.len() < 2 {
+        return None;
+    }
+
+    let recent = swing_highs[0];
+    let prior = swing_highs[1];
+    let price_recent = prices[recent];
+    let price_prior = prices[prior];
+    let delta_recent = deltas[recent];
+    let delta_prior = deltas[prior];
+
+    let bearish = price_recent > price_prior && delta_recent < delta_prior;
+    let bullish = price_recent < price_prior && delta_recent > delta_prior;
+    if !bearish && !bullish {
+        return None;
+    }
+
+    // delta_ratio: how strongly delta diverges.
+    let delta_ratio = (delta_recent.abs() as f64) / (delta_prior.abs() as f64 + 1.0);
+    let base_confidence = (0.35 + delta_ratio * 0.25).min(0.60);
+
+    Some(DivergenceSignalV2 {
+        bearish,
+        confidence: base_confidence,
+        delta_ratio,
+    })
+}
+
+/// Detect absorption at a price level.
+///
+/// Conditions (§6):
+/// - `bar.volume >= avg_vol_20 × 2.0` (high volume)
+/// - `bar.range() / atr_ticks <= 0.5` (narrow range)
+/// - Within `near_level_ticks` of a structural level
+///
+/// Confidence formula (§6):
+/// ```text
+/// vol_ratio = bar.volume / avg_vol_20
+/// range_ratio = bar.range() / atr_ticks
+/// base = min(0.40 + (vol_ratio - 2.0)*0.05 + (0.5 - range_ratio)*0.20, 0.75)
+/// if at_level: base = min(base + 0.10, 0.75)
+/// ```
+pub fn absorption_at_level(
+    bar: &BarSample,
+    near_level_ticks: i32,
+    avg_vol_20: f64,
+    atr_ticks: f64,
+) -> Option<AbsorptionSignal> {
+    if avg_vol_20 <= 0.0 || atr_ticks <= 0.0 {
+        return None;
+    }
+    let vol_ratio = bar.volume / avg_vol_20;
+    let range_ratio = if atr_ticks > 0.0 {
+        bar.range() / atr_ticks
+    } else {
+        1.0
+    };
+
+    let volume_ok = vol_ratio >= 2.0;
+    let range_ok = range_ratio <= 0.5;
+    if !volume_ok || !range_ok {
+        return None;
+    }
+
+    let at_level = near_level_ticks.abs() <= 2;
+    let mut base = (0.40 + (vol_ratio - 2.0) * 0.05 + (0.5 - range_ratio) * 0.20).min(0.75);
+    if at_level {
+        base = (base + 0.10).min(0.75);
+    }
+
+    Some(AbsorptionSignal {
+        confidence: base,
+        vol_ratio,
+        range_ratio,
+    })
+}
+
+/// Estimate P(naked POC touch within session) from distance in ATR units.
+///
+/// Per §6 table (derived from ~80% revisit in 10-session practitioner data):
+/// | distance_atr | probability |
+/// |-------------|-------------|
+/// | ≤ 0.5       | 0.70        |
+/// | ≤ 1.0       | 0.55        |
+/// | ≤ 1.5       | 0.45        |
+/// | ≤ 3.0       | 0.30        |
+/// | > 3.0       | 0.15        |
+pub fn naked_poc_magnet(current_price: f64, prior_poc: f64, atr: f64) -> NakedPocProbability {
+    let distance_atr = if atr > 0.0 {
+        (current_price - prior_poc).abs() / atr
+    } else {
+        f64::MAX
+    };
+    let probability = if distance_atr <= 0.5 {
+        0.70
+    } else if distance_atr <= 1.0 {
+        0.55
+    } else if distance_atr <= 1.5 {
+        0.45
+    } else if distance_atr <= 3.0 {
+        0.30
+    } else {
+        0.15
+    };
+    NakedPocProbability {
+        distance_atr,
+        probability,
+    }
+}
+
+/// Classify the opening drive type from the first 5-minute bar.
+///
+/// A drive is "unambiguous" (§5 #3, Crabel 1990) when:
+/// - directional close (close > midpoint for DriveUp, < midpoint for DriveDown)
+/// - volume >= avg_5min_vol × 1.3 (above-average participation)
+///
+/// Falls back to Responsive or Neutral when conditions aren't met.
+pub fn opening_drive_classifier(
+    open: f64,
+    first_5min: &BarSample,
+    avg_5min_vol: f64,
+) -> OpeningType {
+    let midpoint = (first_5min.high + first_5min.low) / 2.0;
+    let vol_ok = avg_5min_vol > 0.0 && first_5min.volume >= avg_5min_vol * 1.3;
+
+    if first_5min.close > midpoint && vol_ok {
+        // Bullish drive: closed in upper half on above-average volume.
+        return OpeningType::DriveUp;
+    }
+    if first_5min.close < midpoint && vol_ok {
+        return OpeningType::DriveDown;
+    }
+
+    // Responsive: price opened above/below prior close and reversed.
+    // Simplified: open vs. bar midpoint divergence signals responsive action.
+    if open > midpoint && first_5min.close < midpoint {
+        return OpeningType::Responsive;
+    }
+    if open < midpoint && first_5min.close > midpoint {
+        return OpeningType::Responsive;
+    }
+
+    OpeningType::Neutral
+}
+
+/// Combine all §6 detection signals into a weighted composite score.
+///
+/// Weights:
+/// - Delta divergence: 0.40
+/// - Absorption: 0.35
+/// - Naked POC magnet: 0.25 (use probability directly)
+///
+/// Final score is multiplied by `time_of_day_factor(hour_et)`.
+/// If `news_blackout_active` is true, score is forced to 0.
+///
+/// Returns a `CompositeScore` with raw and adjusted values.
+pub fn composite_order_flow_score(
+    divergence: Option<&DivergenceSignalV2>,
+    absorption: Option<&AbsorptionSignal>,
+    poc_prob: Option<&NakedPocProbability>,
+    hour_et: f64,
+    is_high_impact_news: bool,
+    last_news_utc: i64,
+    now_utc: i64,
+) -> CompositeScore {
+    let blackout = news_blackout_until(last_news_utc, now_utc, is_high_impact_news);
+    if blackout {
+        return CompositeScore {
+            raw: 0.0,
+            adjusted: 0.0,
+            news_blackout_active: true,
+        };
+    }
+
+    let div_score = divergence.map(|d| d.confidence).unwrap_or(0.0);
+    let abs_score = absorption.map(|a| a.confidence).unwrap_or(0.0);
+    let poc_score = poc_prob.map(|p| p.probability).unwrap_or(0.0);
+
+    // Weighted sum — only include component if signal is present.
+    let (total_weight, weighted_sum) = {
+        let mut w = 0.0_f64;
+        let mut s = 0.0_f64;
+        if divergence.is_some() {
+            w += 0.40;
+            s += div_score * 0.40;
+        }
+        if absorption.is_some() {
+            w += 0.35;
+            s += abs_score * 0.35;
+        }
+        if poc_prob.is_some() {
+            w += 0.25;
+            s += poc_score * 0.25;
+        }
+        (w, s)
+    };
+
+    let raw = if total_weight > 0.0 {
+        weighted_sum / total_weight
+    } else {
+        0.0
+    };
+
+    let tod = time_of_day_factor(hour_et);
+    // Cap at 1.0 after time adjustment.
+    let adjusted = (raw * tod).min(1.0);
+
+    CompositeScore {
+        raw,
+        adjusted,
+        news_blackout_active: false,
+    }
+}
+
 // ─── tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -602,5 +964,252 @@ mod tests {
         }
         .validated();
         assert_eq!(cfg.polling_hz, 1);
+    }
+
+    // ── intelligence-layer additions ──────────────────────────────────────
+
+    fn bar_sample(open: f64, high: f64, low: f64, close: f64, volume: f64) -> BarSample {
+        BarSample {
+            open,
+            high,
+            low,
+            close,
+            volume,
+        }
+    }
+
+    // ── delta_divergence_at_swing ─────────────────────────────────────────
+
+    #[test]
+    fn delta_div_at_swing_too_few_bars_is_none() {
+        let prices = [100.0, 101.0];
+        let deltas = [10_i64, 20];
+        assert!(delta_divergence_at_swing(&prices, &deltas, 20).is_none());
+    }
+
+    #[test]
+    fn delta_div_at_swing_bearish_detected() {
+        // Price: higher high; delta: lower high → bearish divergence.
+        let prices = [100.0, 105.0, 102.0, 107.0, 104.0];
+        let deltas = [0_i64, 500, 400, 300, 200];
+        let sig = delta_divergence_at_swing(&prices, &deltas, 20);
+        assert!(sig.is_some(), "expected divergence signal");
+        let s = sig.unwrap();
+        assert!(s.bearish);
+        assert!(s.confidence > 0.0 && s.confidence <= 0.60);
+    }
+
+    #[test]
+    fn delta_div_at_swing_no_divergence_is_none() {
+        // Monotonic — no swing-high pair with divergence.
+        let prices = [100.0, 101.0, 102.0, 103.0, 104.0];
+        let deltas = [0_i64, 10, 20, 30, 40];
+        assert!(delta_divergence_at_swing(&prices, &deltas, 20).is_none());
+    }
+
+    // ── absorption_at_level ───────────────────────────────────────────────
+
+    #[test]
+    fn absorption_detected_at_level() {
+        // 2× avg vol, narrow range, within 2 ticks of level.
+        let b = bar_sample(100.0, 100.3, 100.0, 100.15, 2000.0);
+        let sig = absorption_at_level(&b, 1, 800.0, 2.0);
+        assert!(sig.is_some(), "should detect absorption");
+        let s = sig.unwrap();
+        assert!(s.confidence <= 0.75);
+    }
+
+    #[test]
+    fn absorption_not_detected_low_volume() {
+        // Only 1× avg vol — below threshold.
+        let b = bar_sample(100.0, 100.3, 100.0, 100.15, 800.0);
+        let sig = absorption_at_level(&b, 1, 800.0, 2.0);
+        assert!(sig.is_none());
+    }
+
+    #[test]
+    fn absorption_not_detected_wide_range() {
+        // High vol but wide range (> 0.5 × atr).
+        let b = bar_sample(100.0, 102.0, 100.0, 101.0, 2000.0);
+        let sig = absorption_at_level(&b, 1, 800.0, 2.0);
+        // range = 2.0, atr = 2.0 → range_ratio = 1.0 > 0.5 → no signal
+        assert!(sig.is_none());
+    }
+
+    // ── naked_poc_magnet ──────────────────────────────────────────────────
+
+    #[test]
+    fn naked_poc_close_distance_high_probability() {
+        // Within 0.5 ATR → 0.70
+        let r = naked_poc_magnet(100.0, 100.3, 1.0);
+        assert!((r.probability - 0.70).abs() < 1e-10);
+        assert!(r.distance_atr <= 0.5);
+    }
+
+    #[test]
+    fn naked_poc_medium_distance_moderate_probability() {
+        // 1.2 ATR → 0.45
+        let r = naked_poc_magnet(100.0, 101.2, 1.0);
+        assert!((r.probability - 0.45).abs() < 1e-10);
+    }
+
+    #[test]
+    fn naked_poc_far_distance_low_probability() {
+        // 4 ATR → 0.15
+        let r = naked_poc_magnet(100.0, 104.0, 1.0);
+        assert!((r.probability - 0.15).abs() < 1e-10);
+    }
+
+    // ── opening_drive_classifier ──────────────────────────────────────────
+
+    #[test]
+    fn opening_drive_up_on_bullish_close_high_volume() {
+        // Close > midpoint, volume > 1.3× avg.
+        let bar = bar_sample(100.0, 102.0, 99.0, 101.5, 1400.0);
+        let ot = opening_drive_classifier(100.0, &bar, 1000.0);
+        assert_eq!(ot, OpeningType::DriveUp);
+    }
+
+    #[test]
+    fn opening_drive_down_on_bearish_close_high_volume() {
+        let bar = bar_sample(100.0, 102.0, 99.0, 99.5, 1400.0);
+        let ot = opening_drive_classifier(100.0, &bar, 1000.0);
+        assert_eq!(ot, OpeningType::DriveDown);
+    }
+
+    #[test]
+    fn opening_drive_neutral_on_low_volume() {
+        // Low volume → not an unambiguous DriveUp/DriveDown. Open and close
+        // both sit on the same side of the bar midpoint (no responsive
+        // reversal across midpoint), so the classifier must fall through to
+        // Neutral. Bar: midpoint = (102+101)/2 = 101.5; open=101 < midpoint;
+        // close=101.4 < midpoint; no cross → no Responsive signal.
+        let bar = bar_sample(101.0, 102.0, 101.0, 101.4, 900.0);
+        let ot = opening_drive_classifier(101.0, &bar, 1000.0);
+        assert_eq!(ot, OpeningType::Neutral);
+    }
+
+    // ── time_of_day_factor ────────────────────────────────────────────────
+
+    #[test]
+    fn time_of_day_orb_window_returns_1pt10() {
+        assert!((time_of_day_factor(9.8) - 1.10).abs() < 1e-10);
+    }
+
+    #[test]
+    fn time_of_day_lunch_window_returns_0pt50() {
+        assert!((time_of_day_factor(12.0) - 0.50).abs() < 1e-10);
+    }
+
+    #[test]
+    fn time_of_day_close_ramp_returns_1pt15() {
+        assert!((time_of_day_factor(15.5) - 1.15).abs() < 1e-10);
+    }
+
+    #[test]
+    fn time_of_day_neutral_window_returns_1pt0() {
+        assert!((time_of_day_factor(14.0) - 1.0).abs() < 1e-10);
+    }
+
+    // ── news_blackout_until ───────────────────────────────────────────────
+
+    #[test]
+    fn news_blackout_within_60s_active() {
+        assert!(news_blackout_until(1000, 1059, true));
+    }
+
+    #[test]
+    fn news_blackout_after_60s_not_active() {
+        assert!(!news_blackout_until(1000, 1060, true));
+    }
+
+    #[test]
+    fn news_blackout_non_high_impact_always_false() {
+        assert!(!news_blackout_until(1000, 1010, false));
+    }
+
+    // ── composite_order_flow_score ────────────────────────────────────────
+
+    #[test]
+    fn composite_score_blackout_forces_zero() {
+        let div = DivergenceSignalV2 {
+            bearish: true,
+            confidence: 0.55,
+            delta_ratio: 0.8,
+        };
+        let result = composite_order_flow_score(
+            Some(&div),
+            None,
+            None,
+            10.0,
+            true,
+            1000,
+            1010, // within 60s blackout
+        );
+        assert_eq!(result.raw, 0.0);
+        assert_eq!(result.adjusted, 0.0);
+        assert!(result.news_blackout_active);
+    }
+
+    #[test]
+    fn composite_score_lunch_penalty_reduces_adjusted() {
+        let div = DivergenceSignalV2 {
+            bearish: true,
+            confidence: 0.55,
+            delta_ratio: 0.8,
+        };
+        let outside_lunch = composite_order_flow_score(
+            Some(&div),
+            None,
+            None,
+            10.0, // ORB window 1.10×
+            false,
+            0,
+            0,
+        );
+        let at_lunch = composite_order_flow_score(
+            Some(&div),
+            None,
+            None,
+            12.0, // lunch 0.50×
+            false,
+            0,
+            0,
+        );
+        assert!(
+            at_lunch.adjusted < outside_lunch.adjusted,
+            "lunch should produce lower adjusted score"
+        );
+    }
+
+    #[test]
+    fn composite_score_all_signals_present() {
+        let div = DivergenceSignalV2 {
+            bearish: true,
+            confidence: 0.55,
+            delta_ratio: 1.0,
+        };
+        let abs = AbsorptionSignal {
+            confidence: 0.65,
+            vol_ratio: 3.0,
+            range_ratio: 0.3,
+        };
+        let poc = NakedPocProbability {
+            distance_atr: 0.4,
+            probability: 0.70,
+        };
+        let result = composite_order_flow_score(
+            Some(&div),
+            Some(&abs),
+            Some(&poc),
+            14.0, // neutral window → 1.0×
+            false,
+            0,
+            0,
+        );
+        assert!(result.raw > 0.0);
+        // neutral window so adjusted ≈ raw
+        assert!((result.adjusted - result.raw).abs() < 1e-10);
+        assert!(!result.news_blackout_active);
     }
 }

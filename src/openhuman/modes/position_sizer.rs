@@ -172,6 +172,64 @@ pub fn spec_by_id(id: &str) -> &'static ContractSpec {
         .unwrap_or_else(|| SPECS.iter().find(|s| s.name == "STOCK").unwrap())
 }
 
+// ── sample-size tier integration (§4 of INTELLIGENCE_SYNTHESIS.md) ───────────
+//
+// These additions wire the Tier enum from `intelligence.rs` into the
+// position sizer without modifying the existing `size_position` signature.
+
+pub use crate::openhuman::modes::intelligence::Tier;
+
+/// Tier-aware sizing result.
+///
+/// `tier_cap_applied` is true when the tier cap was the binding constraint
+/// rather than the raw risk budget. Useful for display in the UI ("capped
+/// by sample-size tier").
+#[derive(Debug, Clone, PartialEq)]
+pub struct TieredSizingResult {
+    pub base: SizingResult,
+    pub tier: Tier,
+    pub tier_cap_fraction: f64,
+    pub tier_cap_applied: bool,
+}
+
+/// Position-size respecting both the dollar risk budget AND the §4 tier cap.
+///
+/// The tier cap is applied as a multiplier on `risk_dollars` before passing
+/// to `size_position`, so the returned contract count never exceeds what the
+/// tier allows at the given risk budget:
+///
+/// | Tier           | Cap fraction |
+/// |----------------|--------------|
+/// | Hypothesis     | 0.50         |
+/// | Developing     | 0.75         |
+/// | Validated      | 1.00         |
+/// | HighConfidence | 1.00         |
+pub fn size_position_tiered(
+    entry: f64,
+    stop: f64,
+    risk_dollars: f64,
+    spec: &ContractSpec,
+    tier: Tier,
+) -> TieredSizingResult {
+    let cap = match tier {
+        Tier::Hypothesis => 0.50,
+        Tier::Developing => 0.75,
+        Tier::Validated => 1.00,
+        Tier::HighConfidence => 1.00,
+    };
+
+    let capped_risk = risk_dollars * cap;
+    let base = size_position(entry, stop, capped_risk, spec);
+    let tier_cap_applied = cap < 1.0;
+
+    TieredSizingResult {
+        base,
+        tier,
+        tier_cap_fraction: cap,
+        tier_cap_applied,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +318,41 @@ mod tests {
     fn spec_by_id_case_insensitive() {
         let s = spec_by_id("mnq");
         assert_eq!(s.name, "MNQ");
+    }
+
+    // ── tier-aware sizing ─────────────────────────────────────────────────
+
+    #[test]
+    fn tiered_hypothesis_halves_budget() {
+        // $200 budget, Hypothesis → effective $100 → 1 MNQ contract at $100/contract.
+        let r = size_position_tiered(19800.0, 19750.0, 200.0, mnq(), Tier::Hypothesis);
+        assert_eq!(r.base.contracts, 1);
+        assert!(r.tier_cap_applied);
+        assert!((r.tier_cap_fraction - 0.50).abs() < 1e-10);
+    }
+
+    #[test]
+    fn tiered_developing_caps_at_75pct() {
+        // $400 budget, Developing → effective $300 → 3 MNQ contracts.
+        let r = size_position_tiered(19800.0, 19750.0, 400.0, mnq(), Tier::Developing);
+        assert_eq!(r.base.contracts, 3);
+        assert!(r.tier_cap_applied);
+        assert!((r.tier_cap_fraction - 0.75).abs() < 1e-10);
+    }
+
+    #[test]
+    fn tiered_validated_uses_full_budget() {
+        // $200 budget, Validated → full $200 → 2 MNQ contracts.
+        let r = size_position_tiered(19800.0, 19750.0, 200.0, mnq(), Tier::Validated);
+        assert_eq!(r.base.contracts, 2);
+        assert!(!r.tier_cap_applied);
+    }
+
+    #[test]
+    fn tiered_high_confidence_uses_full_budget() {
+        // $200 budget, HighConfidence → full $200 → 2 MNQ contracts.
+        let r = size_position_tiered(19800.0, 19750.0, 200.0, mnq(), Tier::HighConfidence);
+        assert_eq!(r.base.contracts, 2);
+        assert!(!r.tier_cap_applied);
     }
 }

@@ -17,6 +17,7 @@ mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
 mod order_flow_commands;
+mod readiness_commands;
 // Whiskey fork — global hotkey to summon/hide the mascot from any
 // foreground app (default CmdOrCtrl+Shift+Space). Cross-platform; the
 // per-OS dispatch lives in `mascot_window_show` / `_hide` in this file.
@@ -2243,6 +2244,8 @@ pub fn run() {
             order_flow_commands::order_flow_record_bar,
             order_flow_commands::order_flow_tag_active_trade,
             order_flow_commands::order_flow_apply_preset,
+            // Whiskey intelligence layer — pre-trade readiness check.
+            readiness_commands::whiskey_readiness_check,
             // Whiskey execution layer commands (Steps 5, 7, 8, 9, 10).
             execution_commands::kill_switch_trigger,
             execution_commands::kill_switch_status,
