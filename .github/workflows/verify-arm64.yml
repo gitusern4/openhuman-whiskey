@@ -60,6 +60,88 @@ jobs:
           targets: aarch64-pc-windows-msvc
           components: rustfmt,clippy
 
+      # cef-dll-sys's build.rs compiles a C++ wrapper (libcef_dll_wrapper) via
+      # CMake + Ninja, driven by the `cc` crate. On windows-latest the runner
+      # auto-loads the x64-hosted, x64-targeting MSVC env, so for cross-compile
+      # to aarch64-pc-windows-msvc we have to swap in the amd64_arm64 toolset
+      # (x64 host -> ARM64 target). Without this the wrapper builds with the
+      # x64 cl.exe + x64 Windows SDK libs and breaks the cef-dll-sys C++ link
+      # against ARM64-targeted Rust object files.
+      - name: Setup MSVC cross-compile env (amd64_arm64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      # aws-lc-sys's CMake config hard-codes -T ClangCL (the MSBuild "ClangCL"
+      # platform toolset), so the runner needs the LLVM/ClangCL components
+      # provisioned. Confirmed from a local build attempt:
+      #   error MSB8020: The build tools for ClangCL (Platform Toolset =
+      #   'ClangCL') cannot be found.
+      # windows-latest images don't preinstall this; add it via VS Installer.
+      - name: Install ClangCL toolset for aws-lc-sys
+        shell: pwsh
+        run: |
+          $installPath = (& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath)
+          $clangCLDir = Join-Path $installPath 'MSBuild\Microsoft\VC\v170\Platforms\ARM64\PlatformToolsets\ClangCL'
+          if (Test-Path $clangCLDir) {
+            Write-Host "ClangCL toolset already present at $clangCLDir, skipping install."
+            exit 0
+          }
+          $vs = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          Write-Host "Installing ClangCL components into $installPath"
+          $p = Start-Process -FilePath $vs -ArgumentList @(
+            'modify','--installPath',"`"$installPath`"",
+            '--add','Microsoft.VisualStudio.Component.VC.Llvm.Clang',
+            '--add','Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset',
+            '--passive','--norestart','--wait'
+          ) -Wait -PassThru
+          # vs_installer commonly exits 1 when there's nothing to do or when
+          # the install completed with non-fatal warnings. 3010 = success
+          # but reboot requested. Trust the post-install file check below.
+          if (-not (Test-Path $clangCLDir)) {
+            Write-Error "ClangCL toolset not present after install attempt (exit=$($p.ExitCode))"
+            exit 1
+          }
+          Write-Host "ClangCL toolset confirmed at $clangCLDir"
+
+      # Pin the cc / cmake-rs crates to the ARM64-cross cl.exe/lib.exe that
+      # vcvars just put on PATH. ilammy/msvc-dev-cmd@v1 sets PATH/INCLUDE/LIB
+      # for the current and subsequent steps, so the unqualified tool names
+      # resolve to the Hostx64\arm64 binaries.
+      - name: Export ARM64 cross-compile env for cc / cmake-rs
+        shell: bash
+        run: |
+          {
+            echo "CC_aarch64_pc_windows_msvc=cl.exe"
+            echo "CXX_aarch64_pc_windows_msvc=cl.exe"
+            echo "AR_aarch64_pc_windows_msvc=lib.exe"
+            echo "CMAKE_GENERATOR=Ninja"
+            # aws-lc-sys cross-compile to aarch64-pc-windows-msvc.
+            #
+            # The default cc-builder feeds cl.exe both `-march=armv8.4-a+sha3`
+            # (a gcc/clang-only flag cl.exe rejects) and raw `.S` assembly
+            # source files (cl.exe has no GAS assembler). The compiler-feature
+            # probes (`stdalign_check.c`, `neon_sha3_check.c`, `c11.c`) also
+            # fail because cl.exe defaults to a pre-C11 mode that does not
+            # know about `<stdalign.h>` / `_Alignas`.
+            #
+            # The combination below is the documented escape hatch:
+            #   - AWS_LC_SYS_CMAKE_BUILDER=1 routes the build through the
+            #     cmake crate, which knows how to drive cl.exe with the
+            #     ARM64 platform set and to assemble `.S` via the bundled
+            #     armasm64.exe.
+            #   - AWS_LC_SYS_C_STD=C11 forces `/std:c11` on cl.exe so
+            #     `_Alignas` / `<stdalign.h>` and `_Atomic` are in scope.
+            #
+            # AWS_LC_SYS_NO_ASM is intentionally NOT set: aws-lc-sys rejects
+            # it in release builds ("AWS_LC_SYS_NO_ASM only allowed for debug
+            # builds"). With CMAKE_BUILDER + the ClangCL platform toolset
+            # installed in the previous step, clang assembles the ARM `.S`
+            # modules natively, so we don't need the NO_ASM workaround.
+            echo "AWS_LC_SYS_CMAKE_BUILDER=1"
+            echo "AWS_LC_SYS_C_STD=C11"
+          } >> "$GITHUB_ENV"
+
       # CEF download is ~400MB; cache per-target so reruns are fast.
       - name: Cache CEF binary distribution
         uses: actions/cache@v4
