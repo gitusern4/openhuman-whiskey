@@ -130,15 +130,15 @@ jobs:
             #     cmake crate, which knows how to drive cl.exe with the
             #     ARM64 platform set and to assemble `.S` via the bundled
             #     armasm64.exe.
-            #   - AWS_LC_SYS_NO_ASM=1 disables the optimised ARM ASM modules
-            #     (no SHA3-via-NEON, no AES intrinsics) so we never feed `.S`
-            #     files into cl.exe and never set `-march=`. Performance hit
-            #     is acceptable for our use case (TLS handshakes, not bulk
-            #     crypto).
             #   - AWS_LC_SYS_C_STD=C11 forces `/std:c11` on cl.exe so
             #     `_Alignas` / `<stdalign.h>` and `_Atomic` are in scope.
+            #
+            # AWS_LC_SYS_NO_ASM is intentionally NOT set: aws-lc-sys rejects
+            # it in release builds ("AWS_LC_SYS_NO_ASM only allowed for debug
+            # builds"). With CMAKE_BUILDER + the ClangCL platform toolset
+            # installed in the previous step, clang assembles the ARM `.S`
+            # modules natively, so we don't need the NO_ASM workaround.
             echo "AWS_LC_SYS_CMAKE_BUILDER=1"
-            echo "AWS_LC_SYS_NO_ASM=1"
             echo "AWS_LC_SYS_C_STD=C11"
           } >> "$GITHUB_ENV"
 
