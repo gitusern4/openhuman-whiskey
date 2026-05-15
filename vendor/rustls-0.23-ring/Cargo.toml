@@ -59,8 +59,8 @@ enum_no_repr_variant_discriminant_changed = "warn"
 # Any dep that enables rustls/aws-lc-rs (e.g. reqwest 0.13 via sentry)
 # will hit this no-op instead of pulling aws-lc-sys, which fails to build
 # on aarch64-pc-windows-msvc due to CMake/ASM incompatibilities.
-aws-lc-rs = ["ring"]
-aws_lc_rs = ["ring"]
+aws-lc-rs = []
+aws_lc_rs = []
 brotli = [
     "dep:brotli",
     "dep:brotli-decompressor",
