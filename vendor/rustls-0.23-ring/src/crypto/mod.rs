@@ -25,9 +25,6 @@ use crate::{Error, NamedGroup, ProtocolVersion, SupportedProtocolVersion, suites
 #[cfg(feature = "ring")]
 pub mod ring;
 
-/// aws-lc-rs-based CryptoProvider.
-#[cfg(feature = "aws_lc_rs")]
-pub mod aws_lc_rs;
 
 /// TLS message encryption/decryption interfaces.
 pub mod cipher;
@@ -270,15 +267,6 @@ See the documentation of the CryptoProvider type for more information.
         ))]
         {
             return Some(ring::default_provider());
-        }
-
-        #[cfg(all(
-            feature = "aws_lc_rs",
-            not(feature = "ring"),
-            not(feature = "custom-provider")
-        ))]
-        {
-            return Some(aws_lc_rs::default_provider());
         }
 
         #[allow(unreachable_code)]
@@ -690,11 +678,7 @@ impl From<Vec<u8>> for SharedSecret {
 ///     .with_no_client_auth();
 /// # }
 /// ```
-#[cfg(all(feature = "aws_lc_rs", any(feature = "fips", rustls_docsrs)))]
-#[cfg_attr(rustls_docsrs, doc(cfg(feature = "fips")))]
-pub fn default_fips_provider() -> CryptoProvider {
-    aws_lc_rs::default_provider()
-}
+// aws_lc_rs default_fips_provider removed — this vendored copy uses ring only.
 
 mod static_default {
     #[cfg(not(feature = "std"))]
