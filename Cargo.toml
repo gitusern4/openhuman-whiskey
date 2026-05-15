@@ -95,7 +95,7 @@ glob = "0.3"
 unicode-segmentation = "1"
 unicode-width = "0.2"
 hostname = "0.4.2"
-rustls = { version = "0.23", features = ["ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 rustls-pki-types = "1.14.0"
 tokio-rustls = "0.26.4"
 webpki-roots = "1.0.6"
@@ -174,6 +174,12 @@ whatsapp-web = ["dep:whatsapp-rust", "dep:whatsapp-rust-tokio-transport", "dep:w
 # See: https://github.com/tinyhumansai/openhuman/issues/273
 [patch.crates-io]
 whisper-rs-sys = { git = "https://github.com/tinyhumansai/whisper-rs-sys.git", branch = "main" }
+# Force rustls 0.23 to default to ring instead of aws-lc-rs.
+# aws-lc-sys fails to build on aarch64-pc-windows-msvc (CMake ASM flag
+# incompatibility). ring ships pregenerated asm for this target and requires
+# no CMake. The vendored copy is identical to rustls 0.23.38 with only the
+# [features] default changed from aws_lc_rs to ring.
+rustls = { path = "vendor/rustls-0.23-ring" }
 
 # Emit just enough DWARF in release builds for Sentry to symbolicate Rust
 # panics + render surrounding source lines. `line-tables-only` keeps the
