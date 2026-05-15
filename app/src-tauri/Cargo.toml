@@ -81,7 +81,7 @@ hex = "0.4"
 # `CryptoProvider`. Without one, `ClientBuilder::build()` panics with
 # "No provider set" the first time `tauri dev` proxies a request. We install
 # the ring provider at startup in `lib.rs::run()`.
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 log = "0.4"
 env_logger = "0.11"
 
@@ -171,6 +171,12 @@ sandbox-bubblewrap = []
 # whisper.cpp to use MSVC's static runtime (/MT), matching CEF and avoiding
 # LNK2038/LNK1169 CRT conflicts on Windows.
 whisper-rs-sys = { git = "https://github.com/tinyhumansai/whisper-rs-sys.git", branch = "main" }
+# Force rustls 0.23 to default to ring instead of aws-lc-rs.
+# aws-lc-sys fails to build on aarch64-pc-windows-msvc (CMake ASM flag
+# incompatibility). ring ships pregenerated asm for this target and requires
+# no CMake. The vendored copy is identical to rustls 0.23.38 with only the
+# [features] defaults changed: aws_lc_rs → ring, aws-lc-rs feature neutralized.
+rustls = { path = "../../vendor/rustls-0.23-ring" }
 
 # CEF support lives on the `feat/cef` branch of tauri-apps/tauri. We carry our
 # own fork at tinyhumansai/tauri-cef on `feat/cef-notification-intercept` which
